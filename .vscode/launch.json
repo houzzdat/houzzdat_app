@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Houzzapp (Dev)",
+            "request": "launch",
+            "type": "dart",
+            "toolArgs": [
+                "--dart-define=SUPABASE_URL=https://pbnzhevvqjptdfemlqdy.supabase.co",
+                "--dart-define=SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBibnpoZXZ2cWpwdGRmZW1scWR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxMTU0NzcsImV4cCI6MjA4MTY5MTQ3N30.aUVZwMp8t5ssTm1A6OrF_rV69EEA9NJLkHTM8HW42WI"
+            ]
+        }
+    ]
+}
