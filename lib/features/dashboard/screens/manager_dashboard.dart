@@ -1,6 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:houzzdat_app/features/auth/screens/login_screen.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/actions_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/projects_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/team_tab.dart';
@@ -32,17 +31,26 @@ class _ManagerDashboardState extends State<ManagerDashboard> {
 
   Future<void> _handleLogout() async {
     await _supabase.auth.signOut();
-    if (mounted) {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (route) => false,
-      );
-    }
+    // AuthWrapper will handle navigation automatically
   }
 
   @override
   Widget build(BuildContext context) {
+    // ✅ CRITICAL FIX: Show loading until accountId is ready
+    // Changed condition to check for empty string too
+    if (_accountId == null || _accountId!.isEmpty) {
+      return const Scaffold(
+        backgroundColor: Color(0xFFF4F4F4),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF1A237E)),
+        ),
+      );
+    }
+
+    // ✅ Now accountId is guaranteed to be valid
+    // Use non-null assertion safely
+    final accountId = _accountId!;
+
     return DefaultTabController(
       length: 4,
       child: Scaffold(
@@ -68,10 +76,10 @@ class _ManagerDashboardState extends State<ManagerDashboard> {
         ),
         body: TabBarView(
           children: [ 
-            ActionsTab(accountId: _accountId), 
-            ProjectsTab(accountId: _accountId), 
-            TeamTab(accountId: _accountId), 
-            FeedTab(accountId: _accountId) 
+            ActionsTab(accountId: accountId), 
+            ProjectsTab(accountId: accountId), 
+            TeamTab(accountId: accountId), 
+            FeedTab(accountId: accountId) 
           ]
         ),
       ),

@@ -1,5 +1,8 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:houzzdat_app/core/theme/app_theme.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/action_card_widget.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'dart:typed_data';
 
@@ -17,6 +20,18 @@ class _ActionsTabState extends State<ActionsTab> {
   bool _isReplying = false;
   String? _replyToId;
 
+  Stream<List<Map<String, dynamic>>> _getActionsStream() {
+    if (widget.accountId == null || widget.accountId!.isEmpty) {
+      return Stream.value([]);
+    }
+    
+    return _supabase
+        .from('action_items')
+        .stream(primaryKey: ['id'])
+        .eq('account_id', widget.accountId!)
+        .order('priority', ascending: false);
+  }
+
   Future<void> _approveAction(Map<String, dynamic> item) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -30,7 +45,7 @@ class _ActionsTabState extends State<ActionsTab> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successGreen),
             child: const Text('Approve'),
           ),
         ],
@@ -48,8 +63,8 @@ class _ActionsTabState extends State<ActionsTab> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('✅ Action approved!'),
-            backgroundColor: Colors.green,
-          )
+            backgroundColor: AppTheme.successGreen,
+          ),
         );
       }
     }
@@ -57,20 +72,20 @@ class _ActionsTabState extends State<ActionsTab> {
 
   Future<void> _instructAction(Map<String, dynamic> item) async {
     final voiceNote = await _supabase
-      .from('voice_notes')
-      .select()
-      .eq('id', item['voice_note_id'])
-      .single();
-    
+        .from('voice_notes')
+        .select()
+        .eq('id', item['voice_note_id'])
+        .single();
+
     _handleReply(voiceNote);
   }
 
   Future<void> _forwardAction(Map<String, dynamic> item) async {
     final users = await _supabase
-      .from('users')
-      .select()
-      .eq('account_id', widget.accountId ?? '')
-      .neq('id', _supabase.auth.currentUser!.id);
+        .from('users')
+        .select()
+        .eq('account_id', widget.accountId ?? '')
+        .neq('id', _supabase.auth.currentUser!.id);
 
     if (!mounted) return;
 
@@ -111,20 +126,20 @@ class _ActionsTabState extends State<ActionsTab> {
 
   Future<void> _forwardToUser(Map<String, dynamic> item, Map<String, dynamic> toUser) async {
     final voiceNote = await _supabase
-      .from('voice_notes')
-      .select()
-      .eq('id', item['voice_note_id'])
-      .single();
-    
+        .from('voice_notes')
+        .select()
+        .eq('id', item['voice_note_id'])
+        .single();
+
     setState(() {
       _replyToId = voiceNote['id'];
       _isReplying = true;
     });
-    
+
     await _recorderService.startRecording();
-    
+
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -134,36 +149,34 @@ class _ActionsTabState extends State<ActionsTab> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const CircularProgressIndicator(),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppTheme.spacingM),
             Text('Forwarding to: ${toUser['email']}'),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppTheme.spacingM),
             ElevatedButton.icon(
               icon: const Icon(Icons.stop),
               label: const Text('Stop & Send'),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorRed),
               onPressed: () async {
                 final bytes = await _recorderService.stopRecording();
                 if (bytes != null) {
-                  final instructionUrl = await _recorderService.uploadAudio(
+                  await _recorderService.uploadAudio(
                     bytes: bytes,
                     projectId: voiceNote['project_id'],
                     userId: _supabase.auth.currentUser!.id,
                     accountId: widget.accountId!,
                     recipientId: toUser['id'],
                   );
-                  
-                  if (instructionUrl != null) {
-                    await _supabase.from('voice_note_forwards').insert({
-                      'original_note_id': voiceNote['id'],
-                      'forwarded_from': _supabase.auth.currentUser!.id,
-                      'forwarded_to': toUser['id'],
-                    });
-                    
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('✅ Forwarded to ${toUser['email']}')),
-                      );
-                    }
+
+                  await _supabase.from('voice_note_forwards').insert({
+                    'original_note_id': voiceNote['id'],
+                    'forwarded_from': _supabase.auth.currentUser!.id,
+                    'forwarded_to': toUser['id'],
+                  });
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('✅ Forwarded to ${toUser['email']}')),
+                    );
                   }
                 }
                 setState(() {
@@ -182,254 +195,136 @@ class _ActionsTabState extends State<ActionsTab> {
   void _handleReply(Map<String, dynamic> note) async {
     if (!_isReplying) {
       await _recorderService.startRecording();
-      setState(() { _isReplying = true; _replyToId = note['id']; });
+      setState(() {
+        _isReplying = true;
+        _replyToId = note['id'];
+      });
     } else {
       setState(() => _isReplying = false);
       Uint8List? bytes = await _recorderService.stopRecording();
       if (bytes != null) {
         await _recorderService.uploadAudio(
-          bytes: bytes, 
-          projectId: note['project_id'], 
-          userId: _supabase.auth.currentUser!.id, 
+          bytes: bytes,
+          projectId: note['project_id'],
+          userId: _supabase.auth.currentUser!.id,
           accountId: widget.accountId!,
           parentId: note['id'],
           recipientId: note['user_id'],
         );
-        setState(() { _replyToId = null; });
+        setState(() {
+          _replyToId = null;
+        });
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.accountId == null || widget.accountId!.isEmpty) {
+      return const LoadingWidget();
+    }
+
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _supabase.from('action_items')
-        .stream(primaryKey: ['id'])
-        .eq('account_id', widget.accountId ?? '')
-        .order('priority', ascending: false),
+      stream: _getActionsStream(),
       builder: (context, snap) {
-        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        
-        if (snap.data!.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.check_circle_outline, size: 64, color: Colors.grey),
-                SizedBox(height: 16),
-                Text("No action items yet", style: TextStyle(color: Colors.grey)),
-              ],
-            ),
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const LoadingWidget(message: 'Loading actions...');
+        }
+
+        if (snap.hasError) {
+          return ErrorStateWidget(
+            message: snap.error.toString(),
+            onRetry: () => setState(() {}),
           );
         }
-        
+
+        if (!snap.hasData || snap.data!.isEmpty) {
+          return EmptyStateWidget(
+            icon: Icons.check_circle_outline,
+            title: "No action items yet",
+            subtitle: "Action items will appear here when team members record tasks",
+          );
+        }
+
         // Group by category
-        final updates = snap.data!.where((a) => a['category'] == 'update').toList();
-        final approvals = snap.data!.where((a) => a['category'] == 'approval').toList();
         final actions = snap.data!.where((a) => a['category'] == 'action_required').toList();
-        
+        final approvals = snap.data!.where((a) => a['category'] == 'approval').toList();
+        final updates = snap.data!.where((a) => a['category'] == 'update').toList();
+
         return ListView(
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.all(AppTheme.spacingS),
           children: [
             if (actions.isNotEmpty) ...[
-              _buildCategoryHeader('🔴 Action Required', Colors.red, actions.length),
-              ...actions.map((item) => _buildActionCard(item, Colors.red)),
-              const SizedBox(height: 16),
+              _buildCategoryHeader('🔴 Action Required', AppTheme.errorRed, actions.length),
+              ...actions.map((item) => ActionCardWidget(
+                item: item,
+                onApprove: () => _approveAction(item),
+                onInstruct: () => _instructAction(item),
+                onForward: () => _forwardAction(item),
+              )),
+              const SizedBox(height: AppTheme.spacingM),
             ],
             if (approvals.isNotEmpty) ...[
-              _buildCategoryHeader('🟡 Pending Approval', Colors.orange, approvals.length),
-              ...approvals.map((item) => _buildActionCard(item, Colors.orange)),
-              const SizedBox(height: 16),
+              _buildCategoryHeader('🟡 Pending Approval', AppTheme.warningOrange, approvals.length),
+              ...approvals.map((item) => ActionCardWidget(
+                item: item,
+                onApprove: () => _approveAction(item),
+                onInstruct: () => _instructAction(item),
+                onForward: () => _forwardAction(item),
+              )),
+              const SizedBox(height: AppTheme.spacingM),
             ],
             if (updates.isNotEmpty) ...[
-              _buildCategoryHeader('🟢 Updates', Colors.green, updates.length),
-              ...updates.map((item) => _buildActionCard(item, Colors.green)),
+              _buildCategoryHeader('🟢 Updates', AppTheme.successGreen, updates.length),
+              ...updates.map((item) => ActionCardWidget(
+                item: item,
+                onApprove: () => _approveAction(item),
+                onInstruct: () => _instructAction(item),
+                onForward: () => _forwardAction(item),
+              )),
             ],
           ],
         );
-      }
+      },
     );
   }
 
   Widget _buildCategoryHeader(String title, Color color, int count) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.spacingM,
+        vertical: AppTheme.spacingM,
+      ),
+      margin: const EdgeInsets.only(bottom: AppTheme.spacingS),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusM),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Row(
         children: [
           Text(
             title,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: color,
-            ),
+            style: AppTheme.headingSmall.copyWith(color: color),
           ),
           const Spacer(),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.spacingS,
+              vertical: AppTheme.spacingXS,
+            ),
             decoration: BoxDecoration(
               color: color,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppTheme.radiusL),
             ),
             child: Text(
               '$count',
-              style: const TextStyle(
+              style: AppTheme.bodySmall.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionCard(Map<String, dynamic> item, Color categoryColor) {
-    String priorityText = item['priority']?.toString() ?? 'Med';
-    String priorityEmoji = priorityText == 'High' ? '🔴' : (priorityText == 'Med' ? '🟡' : '🟢');
-    
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-      child: Column(
-        children: [
-          ListTile(
-            leading: CircleAvatar(
-              backgroundColor: categoryColor,
-              child: Text(
-                priorityEmoji,
-                style: const TextStyle(fontSize: 18),
-              ),
-            ),
-            title: Text(
-              item['summary'] ?? 'Action Item',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Priority: $priorityText',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (item['ai_analysis'] != null && item['ai_analysis'].toString().isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      item['ai_analysis'], 
-                      style: const TextStyle(fontSize: 12)
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                Text(
-                  'Status: ${item['status'] ?? 'pending'}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: item['status'] == 'approved' ? Colors.green : Colors.grey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (item['status'] == 'pending')
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  if (constraints.maxWidth < 400) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.check_circle, size: 18),
-                          label: const Text('Approve'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: () => _approveAction(item),
-                        ),
-                        const SizedBox(height: 8),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.mic, size: 18),
-                          label: const Text('Instruct'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: () => _instructAction(item),
-                        ),
-                        const SizedBox(height: 8),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.forward, size: 18),
-                          label: const Text('Forward'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: () => _forwardAction(item),
-                        ),
-                      ],
-                    );
-                  }
-                  
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.check_circle, size: 18),
-                          label: const Text('Approve', style: TextStyle(fontSize: 12)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                          ),
-                          onPressed: () => _approveAction(item),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.mic, size: 18),
-                          label: const Text('Instruct', style: TextStyle(fontSize: 12)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                          ),
-                          onPressed: () => _instructAction(item),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.forward, size: 18),
-                          label: const Text('Forward', style: TextStyle(fontSize: 12)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                          ),
-                          onPressed: () => _forwardAction(item),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
         ],
       ),
     );

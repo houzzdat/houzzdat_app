@@ -15,67 +15,26 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
 
-  Future<void> _signIn() async {
-    setState(() => _isLoading = true);
-    try {
-      // Attempt to sign in
-      final response = await Supabase.instance.client.auth.signInWithPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+  // lib/features/auth/screens/login_screen.dart
+
+Future<void> _signIn() async {
+  setState(() => _isLoading = true);
+  try {
+    // Only perform the sign-in. AuthWrapper will automatically react to the session change.
+    await Supabase.instance.client.auth.signInWithPassword(
+      email: _emailController.text.trim(),
+      password: _passwordController.text.trim(),
+    );
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Login Failed: $e"))
       );
-      
-      final userId = response.user?.id;
-      
-      if (userId != null && mounted) {
-        // Check if user is a super admin first
-        final superAdminCheck = await Supabase.instance.client
-            .from('super_admins')
-            .select('id')
-            .eq('id', userId)
-            .maybeSingle();
-        
-        if (superAdminCheck != null) {
-          // User is a super admin
-          Navigator.pushReplacement(
-            context, 
-            MaterialPageRoute(builder: (_) => const SuperAdminScreen())
-          );
-          return;
-        }
-        
-        // Check if user exists in users table
-        final userRecord = await Supabase.instance.client
-            .from('users')
-            .select('role')
-            .eq('id', userId)
-            .maybeSingle();
-        
-        if (userRecord != null) {
-          // Regular user - go to AuthWrapper which will route based on role
-          Navigator.pushReplacement(
-            context, 
-            MaterialPageRoute(builder: (_) => const AuthWrapper())
-          );
-        } else {
-          // User exists in auth but not in any table
-          await Supabase.instance.client.auth.signOut();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("User account not properly configured"))
-            );
-          }
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Login Failed: $e"))
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
     }
+  } finally {
+    if (mounted) setState(() => _isLoading = false);
   }
+}
 
   @override
   Widget build(BuildContext context) {

@@ -3,10 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'dart:typed_data';
+import 'package:houzzdat_app/features/dashboard/widgets/voice_note_card.dart';
 
-// Updated Import pointing to Core Service
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
-import 'package:houzzdat_app/features/auth/screens/login_screen.dart';
 
 class ConstructionHomeScreen extends StatefulWidget {
   const ConstructionHomeScreen({super.key});
@@ -24,6 +23,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   bool _isUploading = false;
   String? _accountId;
   String _userLanguage = 'en';
+  bool _isInitializing = true; // ✅ ADD THIS
 
   @override
   void initState() {
@@ -44,27 +44,15 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
           setState(() {
             _accountId = userData['account_id']?.toString();
             _userLanguage = userData['preferred_language'] ?? 'en';
+            _isInitializing = false; // ✅ SET TO FALSE
           });
         }
       }
     } catch (e) {
       debugPrint("Context Error: $e");
-    }
-  }
-
-  // Resolves UUIDs into human-readable Email and Project names
-  Future<Map<String, dynamic>> _fetchNoteDetails(Map<String, dynamic> note) async {
-    try {
-      final project = await _supabase.from('projects').select('name').eq('id', note['project_id']).single();
-      final user = await _supabase.from('users').select('email').eq('id', note['user_id']).single();
-      final createdAt = DateTime.tryParse(note['created_at'] ?? '') ?? DateTime.now();
-      return {
-        'email': user['email'] ?? 'Worker',
-        'project_name': project['name'] ?? 'Site',
-        'created_at': DateFormat('MMM d, h:mm a').format(createdAt),
-      };
-    } catch (e) {
-      return {'email': 'Worker', 'project_name': 'Site', 'created_at': ''};
+      if (mounted) {
+        setState(() => _isInitializing = false); // ✅ ALSO SET ON ERROR
+      }
     }
   }
 
@@ -118,13 +106,27 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
 
   Future<void> _handleLogout() async {
     await _supabase.auth.signOut();
-    if (mounted) {
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
-    }
+    // AuthWrapper will handle navigation automatically
   }
 
   @override
   Widget build(BuildContext context) {
+    // ✅ CRITICAL FIX: Show loading spinner until accountId is loaded
+    if (_isInitializing || _accountId == null || _accountId!.isEmpty) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF4F4F4),
+        appBar: AppBar(
+          title: const Text('SITE LOGS'),
+          backgroundColor: const Color(0xFF1A237E),
+          foregroundColor: Colors.white,
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: Color(0xFF1A237E)),
+        ),
+      );
+    }
+
+    // ✅ Now we can safely render the UI with a valid accountId
     return Scaffold(
       backgroundColor: const Color(0xFFF4F4F4),
       appBar: AppBar(
@@ -174,113 +176,42 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   }
 
   Widget _buildLiveVoiceNotesList() {
+    // ✅ accountId is guaranteed to be non-null here
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _supabase.from('voice_notes')
           .stream(primaryKey: ['id'])
-          .eq('account_id', _accountId ?? '')
+          .eq('account_id', _accountId!) // ✅ Safe to use non-null assertion
           .order('created_at', ascending: false)
           .limit(10),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final notes = snapshot.data!;
             
+        if (notes.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.mic_none, size: 64, color: Colors.grey),
+                SizedBox(height: 16),
+                Text("No voice notes yet", style: TextStyle(color: Colors.grey)),
+                SizedBox(height: 8),
+                Text("Tap the mic button above to create your first note", 
+                  style: TextStyle(color: Colors.grey, fontSize: 12)),
+              ],
+            ),
+          );
+        }
+
         return ListView.builder(
-          itemCount: notes.length,
-          itemBuilder: (context, i) => FutureBuilder<Map<String, dynamic>>(
-            future: _fetchNoteDetails(notes[i]),
-            builder: (context, snap) {
-              final d = snap.data ?? {'email': '...', 'project_name': '...', 'created_at': ''};
-              
-              // Handle Translations
-              final translations = notes[i]['translated_transcription'];
-              String displayText = notes[i]['transcription'] ?? '';
-              
-              if (translations != null && translations is Map && translations.containsKey(_userLanguage)) {
-                displayText = translations[_userLanguage];
-              }
-
-              // Category Badge Logic
-              final category = notes[i]['category'];
-              Color? categoryColor;
-              String? categoryText;
-
-              if (category == 'action_required') {
-                categoryColor = Colors.red[900];
-                categoryText = '🔴 Action Required';
-              } else if (category == 'approval') {
-                categoryColor = Colors.orange[900];
-                categoryText = '🟡 Approval Needed';
-              } else if (category == 'update') {
-                categoryColor = Colors.green[900];
-                categoryText = '🟢 Update';
-              }
-
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Badge
-                      if (categoryText != null)
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: categoryColor!.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            categoryText,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: categoryColor,
-                            ),
-                          ),
-                        ),
-
-                      ListTile(
-                        leading: const Icon(Icons.mic, color: Color(0xFF1A237E)),
-                        title: Text("${d['email']} - ${d['project_name']}"),
-                        subtitle: Text(d['created_at']),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.play_circle_fill, color: Colors.blue, size: 30),
-                          onPressed: () => _playVoiceNote(notes[i]['audio_url']),
-                        ),
-                      ),
-
-                      // Transcription Text
-                      if (displayText.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                          child: Text(
-                            displayText,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontStyle: FontStyle.italic,
-                              color: Colors.black87,
-                            ),
-                          ),
-                        )
-                      else if (notes[i]['status'] == 'processing')
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-                          child: Row(
-                            children: [
-                              SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
-                              SizedBox(width: 8),
-                              Text("Transcribing...", style: TextStyle(fontSize: 11, color: Colors.grey)),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+            itemCount: notes.length,
+            itemBuilder: (context, i) {
+                return VoiceNoteCard(
+                note: notes[i],
+                isReplying: false, // Workers don't reply in this view
+                onReply: () {}, // Empty callback for worker view
+            );
+           },
         );
       },
     );

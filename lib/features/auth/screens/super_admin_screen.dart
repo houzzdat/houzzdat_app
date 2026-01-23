@@ -42,7 +42,11 @@ class _SuperAdminScreenState extends State<SuperAdminScreen> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
-
+  // FIX: Added logout handler
+  Future<void> _handleLogout() async {
+    await Supabase.instance.client.auth.signOut();
+    // No manual navigation needed if AuthWrapper uses a StreamBuilder
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -52,6 +56,14 @@ class _SuperAdminScreenState extends State<SuperAdminScreen> {
         backgroundColor: const Color(0xFF1A237E), // Matching Dashboard Indigo
         foregroundColor: Colors.white,
         elevation: 0,
+        // FIX: Added logout button to actions
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _handleLogout,
+            tooltip: 'Logout',
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),

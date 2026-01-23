@@ -10,52 +10,40 @@ class AuthWrapper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final session = Supabase.instance.client.auth.currentSession;
-
-    if (session == null) {
-      return const LoginScreen();
-    }
-
-    return FutureBuilder<Map<String, dynamic>?>(
-      future: _getUserRole(session.user.id),
+    // Listen to Auth State changes reactively
+    return StreamBuilder<AuthState>(
+      stream: Supabase.instance.client.auth.onAuthStateChange,
       builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text("Auth Sync Error: ${snapshot.error}"),
-                  const SizedBox(height: 10),
-                  ElevatedButton(
-                    onPressed: () => Supabase.instance.client.auth.signOut(), 
-                    child: const Text("Reset Session")
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-        if (!snapshot.hasData) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        final session = snapshot.data?.session;
+
+        // If no session, show Login
+        if (session == null) {
+          return const LoginScreen();
         }
 
-        final userData = snapshot.data;
-        
-        // Check if user is super admin
-        if (userData == null) {
-          // User might be a super admin (not in users table)
-          return const SuperAdminScreen();
-        }
+        // If there is a session, determine the role
+        return FutureBuilder<Map<String, dynamic>?>(
+          future: _getUserRole(session.user.id),
+          builder: (context, roleSnapshot) {
+            if (roleSnapshot.connectionState == ConnectionState.waiting) {
+              return const Scaffold(body: Center(child: CircularProgressIndicator()));
+            }
 
-        final role = userData['role'];
+            final userData = roleSnapshot.data;
 
-        // Managers and Admins go to the Dashboard
-        if (role == 'manager' || role == 'admin') {
-          return const ManagerDashboard();
-        } else {
-          return const ConstructionHomeScreen();
-        }
+            // Handle Super Admin (returns null in your current logic)
+            if (userData == null) {
+              return const SuperAdminScreen();
+            }
+
+            final role = userData['role'];
+            if (role == 'manager' || role == 'admin') {
+              return const ManagerDashboard();
+            } else {
+              return const ConstructionHomeScreen();
+            }
+          },
+        );
       },
     );
   }
