@@ -75,7 +75,6 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
           .eq('id', widget.note['user_id'])
           .single();
 
-      // Parse UTC time and convert to IST
       DateTime utcTime = DateTime.parse(widget.note['created_at']);
       DateTime istTime = utcTime.add(const Duration(hours: 5, minutes: 30));
 
@@ -110,14 +109,6 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
       }
     } catch (e) {
       debugPrint("Playback Error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Playback error: $e'),
-            backgroundColor: AppTheme.errorRed,
-          ),
-        );
-      }
     }
   }
 
@@ -127,11 +118,25 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
     return '$minutes:$seconds';
   }
 
+  // Get the validated transcription (user-edited or original)
+  String? _getValidatedTranscript() {
+    if (widget.note['transcript_final'] != null && 
+        widget.note['transcript_final'].toString().isNotEmpty) {
+      return widget.note['transcript_final'];
+    }
+    return widget.note['transcription'];
+  }
+
+  bool _isEdited() {
+    return widget.note['is_edited'] == true;
+  }
+
   Map<String, String> _parseTranscription(String? transcription) {
     if (transcription == null || transcription.isEmpty) {
       return {'original': '', 'translated': '', 'language': ''};
     }
 
+    // Pattern: [LANGUAGE] original text \n\n [English] translated text
     final languagePattern = RegExp(
       r'\[(.*?)\]\s*(.*?)(?:\n\n\[English\]\s*(.*))?$',
       dotAll: true,
@@ -163,28 +168,19 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
     }
 
     final flagEmojis = {
-      'Spanish': '🇪🇸',
-      'French': '🇫🇷',
-      'German': '🇩🇪',
-      'Italian': '🇮🇹',
-      'Portuguese': '🇵🇹',
-      'Russian': '🇷🇺',
-      'Japanese': '🇯🇵',
-      'Korean': '🇰🇷',
-      'Chinese': '🇨🇳',
-      'Arabic': '🇸🇦',
-      'Hindi': '🇮🇳',
-      'Telugu': '🇮🇳',
-      'Tamil': '🇮🇳',
-      'Marathi': '🇮🇳',
-      'Bengali': '🇮🇳',
+      'Spanish': '🇪🇸', 'French': '🇫🇷', 'German': '🇩🇪',
+      'Italian': '🇮🇹', 'Portuguese': '🇵🇹', 'Russian': '🇷🇺',
+      'Japanese': '🇯🇵', 'Korean': '🇰🇷', 'Chinese': '🇨🇳',
+      'Arabic': '🇸🇦', 'Hindi': '🇮🇳', 'Telugu': '🇮🇳',
+      'Tamil': '🇮🇳', 'Marathi': '🇮🇳', 'Bengali': '🇮🇳',
+      'Urdu': '🇵🇰', 'Kannada': '🇮🇳', 'Malayalam': '🇮🇳',
     };
 
     return Container(
-      margin: const EdgeInsets.only(bottom: AppTheme.spacingS),
+      margin: const EdgeInsets.only(bottom: AppTheme.spacingM),
       padding: const EdgeInsets.symmetric(
-        horizontal: AppTheme.spacingS,
-        vertical: AppTheme.spacingXS,
+        horizontal: AppTheme.spacingM,
+        vertical: AppTheme.spacingS,
       ),
       decoration: BoxDecoration(
         color: AppTheme.warningOrange.withOpacity(0.1),
@@ -196,11 +192,11 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
         children: [
           Text(
             flagEmojis[language] ?? '🌍',
-            style: const TextStyle(fontSize: 14),
+            style: const TextStyle(fontSize: 16),
           ),
-          const SizedBox(width: AppTheme.spacingXS),
+          const SizedBox(width: AppTheme.spacingS),
           Text(
-            language,
+            language.toUpperCase(),
             style: AppTheme.caption.copyWith(
               fontWeight: FontWeight.bold,
               color: AppTheme.warningOrange,
@@ -209,32 +205,6 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
         ],
       ),
     );
-  }
-
-  Color _getCategoryColor() {
-    switch (widget.note['category']) {
-      case 'action_required':
-        return AppTheme.errorRed;
-      case 'approval':
-        return AppTheme.warningOrange;
-      case 'update':
-        return AppTheme.successGreen;
-      default:
-        return AppTheme.textSecondary;
-    }
-  }
-
-  String _getCategoryText() {
-    switch (widget.note['category']) {
-      case 'action_required':
-        return '🔴 Action Required';
-      case 'approval':
-        return '🟡 Approval Needed';
-      case 'update':
-        return '🟢 Update';
-      default:
-        return '';
-    }
   }
 
   @override
@@ -249,25 +219,22 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
     }
 
     final isThreadedReply = widget.note['parent_id'] != null;
-    final transcription = widget.note['transcription'];
+    final transcription = _getValidatedTranscript();
     final parsedTranscription = _parseTranscription(transcription);
     final status = widget.note['status'] ?? '';
-    final categoryText = _getCategoryText();
-    final categoryColor = _getCategoryColor();
+    final isEdited = _isEdited();
 
     return Card(
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppTheme.spacingM,
+        vertical: AppTheme.spacingS,
+      ),
       child: Padding(
         padding: const EdgeInsets.all(AppTheme.spacingM),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Category Badge
-            if (categoryText.isNotEmpty) ...[
-              CategoryBadge(text: categoryText, color: categoryColor),
-              const SizedBox(height: AppTheme.spacingM),
-            ],
-
-            // Note Header
+            // Header
             Row(
               children: [
                 CircleAvatar(
@@ -298,6 +265,14 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
                             CategoryBadge(
                               text: 'REPLY',
                               color: AppTheme.infoBlue,
+                            ),
+                          ],
+                          if (isEdited) ...[
+                            const SizedBox(width: AppTheme.spacingS),
+                            CategoryBadge(
+                              text: 'EDITED',
+                              color: AppTheme.warningOrange,
+                              icon: Icons.edit,
                             ),
                           ],
                         ],
@@ -344,9 +319,6 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
                             thumbShape: const RoundSliderThumbShape(
                               enabledThumbRadius: 6,
                             ),
-                            overlayShape: const RoundSliderOverlayShape(
-                              overlayRadius: 12,
-                            ),
                           ),
                           child: Slider(
                             value: _position.inSeconds.toDouble(),
@@ -380,54 +352,33 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
             // Transcription Section
             if (transcription != null && transcription.isNotEmpty) ...[
               const SizedBox(height: AppTheme.spacingM),
+              
               _buildLanguageBadge(parsedTranscription['language']!),
 
-              // Original Language
+              // Original Language (if not English)
               if (parsedTranscription['original']!.isNotEmpty &&
                   parsedTranscription['language']!.toLowerCase() != 'english') ...[
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(AppTheme.spacingM),
                   decoration: BoxDecoration(
-                    color: AppTheme.warningOrange.withOpacity(0.05),
+                    color: Colors.white,
                     borderRadius: BorderRadius.circular(AppTheme.radiusM),
-                    border: Border.all(
-                      color: AppTheme.warningOrange.withOpacity(0.2),
-                    ),
+                    border: Border.all(color: AppTheme.textSecondary.withOpacity(0.2)),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.translate,
-                              size: 12, color: AppTheme.warningOrange),
-                          const SizedBox(width: AppTheme.spacingXS),
-                          Text(
-                            "ORIGINAL (${parsedTranscription['language']})",
-                            style: AppTheme.caption.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: AppTheme.warningOrange,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: AppTheme.spacingXS),
-                      Text(
-                        parsedTranscription['original']!,
-                        style: AppTheme.bodyMedium.copyWith(
-                          height: 1.4,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    parsedTranscription['original']!,
+                    style: AppTheme.bodyLarge.copyWith(
+                      height: 1.5,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 ),
               ],
 
-              // English Translation
+              // English Translation (if available)
               if (parsedTranscription['translated']!.isNotEmpty) ...[
-                const SizedBox(height: AppTheme.spacingS),
+                const SizedBox(height: AppTheme.spacingM),
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(AppTheme.spacingM),
@@ -443,11 +394,10 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.check_circle,
-                              size: 12, color: AppTheme.infoBlue),
-                          const SizedBox(width: AppTheme.spacingXS),
+                          Icon(Icons.translate, size: 14, color: AppTheme.infoBlue),
+                          const SizedBox(width: AppTheme.spacingS),
                           Text(
-                            "ENGLISH TRANSLATION",
+                            'ENGLISH',
                             style: AppTheme.caption.copyWith(
                               fontWeight: FontWeight.bold,
                               color: AppTheme.infoBlue,
@@ -455,48 +405,34 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: AppTheme.spacingXS),
+                      const SizedBox(height: AppTheme.spacingS),
                       Text(
                         parsedTranscription['translated']!,
                         style: AppTheme.bodyMedium.copyWith(
-                          height: 1.4,
-                          fontWeight: FontWeight.w500,
+                          height: 1.5,
                         ),
                       ),
                     ],
                   ),
                 ),
-              ] else if (parsedTranscription['original']!.isNotEmpty) ...[
+              ] else if (parsedTranscription['original']!.isNotEmpty &&
+                         parsedTranscription['language']!.toLowerCase() == 'english') ...[
+                // English-only transcription
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(AppTheme.spacingM),
                   decoration: BoxDecoration(
-                    color: AppTheme.infoBlue.withOpacity(0.05),
+                    color: Colors.white,
                     borderRadius: BorderRadius.circular(AppTheme.radiusM),
-                    border: Border.all(
-                      color: AppTheme.infoBlue.withOpacity(0.1),
-                    ),
+                    border: Border.all(color: AppTheme.textSecondary.withOpacity(0.2)),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "TRANSCRIPTION",
-                        style: AppTheme.caption.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.infoBlue,
-                        ),
-                      ),
-                      const SizedBox(height: AppTheme.spacingXS),
-                      Text(
-                        parsedTranscription['original']!,
-                        style: AppTheme.bodyMedium.copyWith(height: 1.4),
-                      ),
-                    ],
+                  child: Text(
+                    parsedTranscription['original']!,
+                    style: AppTheme.bodyMedium.copyWith(height: 1.5),
                   ),
                 ),
               ],
-            ] else if (status == 'processing') ...[
+            ] else if (status == 'processing' || status == 'validating') ...[
               const SizedBox(height: AppTheme.spacingM),
               Row(
                 children: [
@@ -507,7 +443,9 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
                   ),
                   const SizedBox(width: AppTheme.spacingS),
                   Text(
-                    'Transcribing and detecting language...',
+                    status == 'validating'
+                        ? 'Awaiting validation...'
+                        : 'Processing...',
                     style: AppTheme.bodySmall.copyWith(
                       fontStyle: FontStyle.italic,
                     ),
@@ -528,7 +466,7 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
                   size: 18,
                 ),
                 label: Text(
-                  widget.isReplying ? "Stop & Send Reply" : "Record Threaded Reply",
+                  widget.isReplying ? "Stop & Send Reply" : "Record Reply",
                   style: const TextStyle(fontSize: 13),
                 ),
                 style: TextButton.styleFrom(
