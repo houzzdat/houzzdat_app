@@ -26,6 +26,7 @@ class AudioRecorderService {
             .getUserMedia(web.MediaStreamConstraints(audio: true.toJS))
             .toDart;
         
+        // FIX: Cast JSAny? to web.MediaStream to access getTracks()
         if (jsAnyStream != null) {
           final stream = jsAnyStream as web.MediaStream;
           final tracks = stream.getTracks().toDart;
@@ -51,6 +52,7 @@ class AudioRecorderService {
             .getUserMedia(web.MediaStreamConstraints(audio: true.toJS))
             .toDart;
             
+        // FIX: Cast JSAny? to web.MediaStream
         if (jsAnyStream != null) {
           _mediaStream = jsAnyStream as web.MediaStream;
           _mediaRecorder = web.MediaRecorder(_mediaStream!);
@@ -104,6 +106,7 @@ class AudioRecorderService {
         if (_mediaStream != null) {
           final tracks = _mediaStream!.getTracks().toDart;
           for (var track in tracks) {
+            // FIX: Cast JSAny? to web.MediaStreamTrack to access stop()
             (track as web.MediaStreamTrack).stop();
           }
           _mediaStream = null;
@@ -115,31 +118,6 @@ class AudioRecorderService {
     return path != null ? await File(path).readAsBytes() : null;
   }
 
-  /// NEW METHOD: Upload to storage and return URL for ValidationScreen
-  Future<String?> uploadAudioToStorage({
-    required Uint8List bytes,
-  }) async {
-    try {
-      const ext = kIsWeb ? 'webm' : 'm4a';
-      final path = 'log_${DateTime.now().millisecondsSinceEpoch}.$ext';
-      
-      await _supabase.storage.from('voice-notes').uploadBinary(
-        path, 
-        bytes, 
-        fileOptions: FileOptions(contentType: 'audio/$ext', upsert: true)
-      );
-      
-      final String url = _supabase.storage.from('voice-notes').getPublicUrl(path);
-      return url;
-      
-    } catch (e) { 
-      debugPrint("Upload Error: $e");
-      return null; 
-    }
-  }
-
-  /// LEGACY METHOD: Direct upload (kept for backward compatibility with replies)
-  /// This bypasses validation and should only be used for threaded replies
   Future<String?> uploadAudio({
     required Uint8List bytes, 
     required String projectId, 
@@ -153,19 +131,14 @@ class AudioRecorderService {
       final path = 'log_${DateTime.now().millisecondsSinceEpoch}.$ext';
       
       await _supabase.storage.from('voice-notes').uploadBinary(
-        path, bytes, fileOptions: FileOptions(contentType: 'audio/$ext', upsert: true)
+        path, bytes, fileOptions: const FileOptions(contentType: 'audio/$ext', upsert: true)
       );
       
       final String url = _supabase.storage.from('voice-notes').getPublicUrl(path);
       
       final res = await _supabase.from('voice_notes').insert({
-        'user_id': userId, 
-        'project_id': projectId, 
-        'account_id': accountId, 
-        'audio_url': url, 
-        'parent_id': parentId, 
-        'recipient_id': recipientId, 
-        'status': 'processing'
+        'user_id': userId, 'project_id': projectId, 'account_id': accountId, 
+        'audio_url': url, 'parent_id': parentId, 'recipient_id': recipientId, 'status': 'processing'
       }).select().single();
       
       try {

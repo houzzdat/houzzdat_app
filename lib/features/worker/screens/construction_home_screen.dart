@@ -58,83 +58,83 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   }
 
   Future<void> _handleRecording() async {
-    bool hasPermission = await _recorderService.checkPermission();
-    if (!hasPermission) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Microphone permission required')),
-        );
-      }
-      return;
+  bool hasPermission = await _recorderService.checkPermission();
+  if (!hasPermission) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Microphone permission required')),
+      );
     }
+    return;
+  }
 
-    if (!_isRecording) {
-      // Start recording
-      await _recorderService.startRecording();
-      setState(() => _isRecording = true);
-    } else {
-      // Stop recording and navigate to validation
-      setState(() {
-        _isRecording = false;
-        _isUploading = true;
-      });
-      
-      try {
-        Uint8List? audioBytes = await _recorderService.stopRecording();
+  if (!_isRecording) {
+    await _recorderService.startRecording();
+    setState(() => _isRecording = true);
+  } else {
+    setState(() {
+      _isRecording = false;
+      _isUploading = true;
+    });
+    
+    try {
+      Uint8List? audioBytes = await _recorderService.stopRecording();
 
-        if (audioBytes != null && _projectId != null) {
-          // Upload to storage first
-          final audioUrl = await _recorderService.uploadAudioToStorage(
-            bytes: audioBytes,
+      // Fix: Ensure all required parameters are passed to uploadAudio
+      if (audioBytes != null && _projectId != null && _accountId != null) {
+        final audioUrl = await _recorderService.uploadAudio(
+          bytes: audioBytes,
+          projectId: _projectId!,        // Added missing projectId
+          userId: _supabase.auth.currentUser!.id, // Added current user ID
+          accountId: _accountId!,        // Fixed: Added missing accountId
+        );
+
+        if (audioUrl != null && mounted) {
+          final result = await Navigator.push<bool>(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ValidationScreen(
+                audioUrl: audioUrl,
+                projectId: _projectId!,
+                userId: _supabase.auth.currentUser!.id,
+                accountId: _accountId!,
+              ),
+            ),
           );
 
-          if (audioUrl != null && mounted) {
-            // Navigate to ValidationScreen
-            final result = await Navigator.push<bool>(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ValidationScreen(
-                  audioUrl: audioUrl,
-                  projectId: _projectId!,
-                  userId: _supabase.auth.currentUser!.id,
-                  accountId: _accountId!,
-                ),
-              ),
-            );
-
-            // Show success message if validation was completed
-            if (result == true && mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('✅ Voice note submitted successfully!'),
-                  backgroundColor: Colors.green,
-                ),
-              );
-            }
-          }
-        } else if (_projectId == null) {
-          if (mounted) {
+          if (result == true && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('No project assigned. Please contact your manager.'),
-                backgroundColor: Colors.red,
+                content: Text('✅ Voice note submitted successfully!'),
+                backgroundColor: Colors.green,
               ),
             );
           }
         }
-      } catch (e) {
+      } else if (_projectId == null || _accountId == null) {
+        // Handle missing context
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e')),
+            const SnackBar(
+              content: Text('Profile error: Missing project or account data.'),
+              backgroundColor: Colors.red,
+            ),
           );
         }
-      } finally {
-        if (mounted) {
-          setState(() => _isUploading = false);
-        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
       }
     }
   }
+}
 
   Future<void> _handleLogout() async {
     await _supabase.auth.signOut();

@@ -1,4 +1,4 @@
-﻿// Enhanced transcription with multiple provider support (Groq, Gemini, OpenAI)
+﻿// Enhanced transcription with CORS support and multiple provider options
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 const serve = (handler: (req: Request) => Promise<Response>) => {
@@ -6,6 +6,14 @@ const serve = (handler: (req: Request) => Promise<Response>) => {
 }
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+// ============================================================================
+// CORS HEADERS - CRITICAL FOR WEB CLIENT
+// ============================================================================
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
 
 // ============================================================================
 // PROVIDER INTERFACES
@@ -222,7 +230,6 @@ class GeminiProvider {
   }
 
   async transcribe(audioBlob: Blob, fileName: string, contextPrompt: string): Promise<TranscriptionResult> {
-    // Convert audio to base64
     const arrayBuffer = await audioBlob.arrayBuffer()
     const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
     
@@ -264,7 +271,6 @@ class GeminiProvider {
         language: parsed.language || "unknown"
       }
     } catch {
-      // Fallback if not JSON
       return {
         text: textResponse,
         language: "unknown"
@@ -624,10 +630,15 @@ function fallbackClassify(text: string): ClassificationResult {
 }
 
 // ============================================================================
-// MAIN HANDLER
+// MAIN HANDLER WITH CORS SUPPORT
 // ============================================================================
 
 serve(async (req) => {
+  // ✅ CRITICAL: Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
   try {
     const payload = await req.json()
     console.log("Received payload:", JSON.stringify(payload, null, 2))

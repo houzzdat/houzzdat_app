@@ -14,7 +14,7 @@ Future<void> main() async {
   // FIX 3 Explanation: We remove 'const' here. 
   // Since AuthWrapper may rely on runtime data (like User sessions), 
   // it cannot be a compile-time constant.
-  runApp(MyApp());
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
