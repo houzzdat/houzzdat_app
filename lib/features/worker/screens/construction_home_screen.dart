@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'dart:typed_data';
 import 'package:houzzdat_app/features/dashboard/widgets/voice_note_card.dart';
-
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
+import 'package:houzzdat_app/features/validation/screens/validation_screen.dart';
 
 class ConstructionHomeScreen extends StatefulWidget {
   const ConstructionHomeScreen({super.key});
@@ -22,8 +21,9 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   bool _isRecording = false;
   bool _isUploading = false;
   String? _accountId;
+  String? _projectId;
   String _userLanguage = 'en';
-  bool _isInitializing = true; // ✅ ADD THIS
+  bool _isInitializing = true;
 
   @override
   void initState() {
@@ -37,67 +37,99 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
       if (user != null) {
         final userData = await _supabase
             .from('users')
-            .select('account_id, preferred_language')
+            .select('account_id, current_project_id, preferred_language')
             .eq('id', user.id)
             .single();
         if (mounted) {
           setState(() {
             _accountId = userData['account_id']?.toString();
+            _projectId = userData['current_project_id']?.toString();
             _userLanguage = userData['preferred_language'] ?? 'en';
-            _isInitializing = false; // ✅ SET TO FALSE
+            _isInitializing = false;
           });
         }
       }
     } catch (e) {
       debugPrint("Context Error: $e");
       if (mounted) {
-        setState(() => _isInitializing = false); // ✅ ALSO SET ON ERROR
+        setState(() => _isInitializing = false);
       }
-    }
-  }
-
-  void _playVoiceNote(String url) async {
-    try {
-      await _audioPlayer.play(UrlSource(url)); 
-    } catch (e) {
-      debugPrint("Playback Error: $e");
     }
   }
 
   Future<void> _handleRecording() async {
     bool hasPermission = await _recorderService.checkPermission();
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Microphone permission required')),
+        );
+      }
+      return;
+    }
 
     if (!_isRecording) {
+      // Start recording
       await _recorderService.startRecording();
       setState(() => _isRecording = true);
     } else {
-      setState(() => _isRecording = false);
-      Uint8List? audioBytes = await _recorderService.stopRecording();
+      // Stop recording and navigate to validation
+      setState(() {
+        _isRecording = false;
+        _isUploading = true;
+      });
+      
+      try {
+        Uint8List? audioBytes = await _recorderService.stopRecording();
 
-      if (audioBytes != null) {
-        setState(() => _isUploading = true);
-        try {
-          final user = _supabase.auth.currentUser;
-          final userData = await _supabase
-              .from('users')
-              .select('current_project_id, account_id')
-              .eq('id', user!.id)
-              .single();
-
-          if (userData['current_project_id'] == null) throw "No project assigned";
-
-          await _recorderService.uploadAudio(
+        if (audioBytes != null && _projectId != null) {
+          // Upload to storage first
+          final audioUrl = await _recorderService.uploadAudioToStorage(
             bytes: audioBytes,
-            projectId: userData['current_project_id'],
-            userId: user.id,
-            accountId: userData['account_id'],
           );
-          
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Note uploaded!')));
-        } catch (e) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-        } finally {
+
+          if (audioUrl != null && mounted) {
+            // Navigate to ValidationScreen
+            final result = await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ValidationScreen(
+                  audioUrl: audioUrl,
+                  projectId: _projectId!,
+                  userId: _supabase.auth.currentUser!.id,
+                  accountId: _accountId!,
+                ),
+              ),
+            );
+
+            // Show success message if validation was completed
+            if (result == true && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('✅ Voice note submitted successfully!'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          }
+        } else if (_projectId == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('No project assigned. Please contact your manager.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e')),
+          );
+        }
+      } finally {
+        if (mounted) {
           setState(() => _isUploading = false);
         }
       }
@@ -106,12 +138,10 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
 
   Future<void> _handleLogout() async {
     await _supabase.auth.signOut();
-    // AuthWrapper will handle navigation automatically
   }
 
   @override
   Widget build(BuildContext context) {
-    // ✅ CRITICAL FIX: Show loading spinner until accountId is loaded
     if (_isInitializing || _accountId == null || _accountId!.isEmpty) {
       return Scaffold(
         backgroundColor: const Color(0xFFF4F4F4),
@@ -126,7 +156,6 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
       );
     }
 
-    // ✅ Now we can safely render the UI with a valid accountId
     return Scaffold(
       backgroundColor: const Color(0xFFF4F4F4),
       appBar: AppBar(
@@ -145,7 +174,16 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
           _buildHeroSection(),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 20.0, vertical: 10),
-            child: Align(alignment: Alignment.centerLeft, child: Text("COMPANY FEED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey))),
+            child: Align(
+              alignment: Alignment.centerLeft, 
+              child: Text(
+                "COMPANY FEED", 
+                style: TextStyle(
+                  fontWeight: FontWeight.bold, 
+                  color: Colors.grey
+                )
+              )
+            ),
           ),
           Expanded(child: _buildLiveVoiceNotesList()),
         ],
@@ -154,20 +192,40 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   }
 
   Widget _buildHeroSection() {
+    String statusText;
+    if (_isUploading) {
+      statusText = "Preparing validation...";
+    } else if (_isRecording) {
+      statusText = "Recording... Tap to stop";
+    } else {
+      statusText = "Tap to Record Site Note";
+    }
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(30),
       color: Colors.white,
       child: Column(
         children: [
-          Text(_isUploading ? "Uploading..." : "Tap to Record Site Note", style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(
+            statusText, 
+            style: const TextStyle(fontWeight: FontWeight.bold)
+          ),
           const SizedBox(height: 20),
           GestureDetector(
             onTap: _isUploading ? null : _handleRecording,
             child: CircleAvatar(
               radius: 50, 
-              backgroundColor: _isRecording ? Colors.red : const Color(0xFFFFC107),
-              child: Icon(_isRecording ? Icons.stop : Icons.mic, size: 40, color: Colors.black),
+              backgroundColor: _isRecording 
+                ? Colors.red 
+                : (_isUploading ? Colors.grey : const Color(0xFFFFC107)),
+              child: _isUploading
+                ? const CircularProgressIndicator(color: Colors.white)
+                : Icon(
+                    _isRecording ? Icons.stop : Icons.mic, 
+                    size: 40, 
+                    color: Colors.black
+                  ),
             ),
           ),
         ],
@@ -176,15 +234,17 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   }
 
   Widget _buildLiveVoiceNotesList() {
-    // ✅ accountId is guaranteed to be non-null here
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _supabase.from('voice_notes')
           .stream(primaryKey: ['id'])
-          .eq('account_id', _accountId!) // ✅ Safe to use non-null assertion
+          .eq('account_id', _accountId!)
           .order('created_at', ascending: false)
           .limit(10),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
         final notes = snapshot.data!;
             
         if (notes.isEmpty) {
@@ -194,24 +254,29 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
               children: [
                 Icon(Icons.mic_none, size: 64, color: Colors.grey),
                 SizedBox(height: 16),
-                Text("No voice notes yet", style: TextStyle(color: Colors.grey)),
+                Text(
+                  "No voice notes yet", 
+                  style: TextStyle(color: Colors.grey)
+                ),
                 SizedBox(height: 8),
-                Text("Tap the mic button above to create your first note", 
-                  style: TextStyle(color: Colors.grey, fontSize: 12)),
+                Text(
+                  "Tap the mic button above to create your first note", 
+                  style: TextStyle(color: Colors.grey, fontSize: 12)
+                ),
               ],
             ),
           );
         }
 
         return ListView.builder(
-            itemCount: notes.length,
-            itemBuilder: (context, i) {
-                return VoiceNoteCard(
-                note: notes[i],
-                isReplying: false, // Workers don't reply in this view
-                onReply: () {}, // Empty callback for worker view
+          itemCount: notes.length,
+          itemBuilder: (context, i) {
+            return VoiceNoteCard(
+              note: notes[i],
+              isReplying: false,
+              onReply: () {},
             );
-           },
+          },
         );
       },
     );
