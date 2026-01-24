@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/feed_filters_widget.dart';
-import 'package:houzzdat_app/features/dashboard/widgets/voice_note_card.dart';
+import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_card.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'dart:typed_data';
 

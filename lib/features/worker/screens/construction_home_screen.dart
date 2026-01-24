@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'dart:typed_data';
-import 'package:houzzdat_app/features/dashboard/widgets/voice_note_card.dart';
+import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_card.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
-import 'package:houzzdat_app/features/validation/screens/validation_screen.dart';
 
 class ConstructionHomeScreen extends StatefulWidget {
   const ConstructionHomeScreen({super.key});
@@ -58,83 +57,71 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   }
 
   Future<void> _handleRecording() async {
-  bool hasPermission = await _recorderService.checkPermission();
-  if (!hasPermission) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Microphone permission required')),
-      );
-    }
-    return;
-  }
-
-  if (!_isRecording) {
-    await _recorderService.startRecording();
-    setState(() => _isRecording = true);
-  } else {
-    setState(() {
-      _isRecording = false;
-      _isUploading = true;
-    });
-    
-    try {
-      Uint8List? audioBytes = await _recorderService.stopRecording();
-
-      // Fix: Ensure all required parameters are passed to uploadAudio
-      if (audioBytes != null && _projectId != null && _accountId != null) {
-        final audioUrl = await _recorderService.uploadAudio(
-          bytes: audioBytes,
-          projectId: _projectId!,        // Added missing projectId
-          userId: _supabase.auth.currentUser!.id, // Added current user ID
-          accountId: _accountId!,        // Fixed: Added missing accountId
+    bool hasPermission = await _recorderService.checkPermission();
+    if (!hasPermission) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Microphone permission required')),
         );
+      }
+      return;
+    }
 
-        if (audioUrl != null && mounted) {
-          final result = await Navigator.push<bool>(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ValidationScreen(
-                audioUrl: audioUrl,
-                projectId: _projectId!,
-                userId: _supabase.auth.currentUser!.id,
-                accountId: _accountId!,
-              ),
-            ),
+    if (!_isRecording) {
+      // Start recording
+      await _recorderService.startRecording();
+      setState(() => _isRecording = true);
+    } else {
+      // Stop recording and upload
+      setState(() {
+        _isRecording = false;
+        _isUploading = true;
+      });
+      
+      try {
+        Uint8List? audioBytes = await _recorderService.stopRecording();
+
+        if (audioBytes != null && _projectId != null && _accountId != null) {
+          // Upload audio directly - transcription happens automatically via database trigger
+          final audioUrl = await _recorderService.uploadAudio(
+            bytes: audioBytes,
+            projectId: _projectId!,
+            userId: _supabase.auth.currentUser!.id,
+            accountId: _accountId!,
           );
 
-          if (result == true && mounted) {
+          if (audioUrl != null && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('✅ Voice note submitted successfully!'),
+                content: Text('✅ Voice note submitted! Processing transcription...'),
                 backgroundColor: Colors.green,
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        } else if (_projectId == null || _accountId == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Profile error: Missing project or account data.'),
+                backgroundColor: Colors.red,
               ),
             );
           }
         }
-      } else if (_projectId == null || _accountId == null) {
-        // Handle missing context
+      } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Profile error: Missing project or account data.'),
-              backgroundColor: Colors.red,
-            ),
+            SnackBar(content: Text('Error: $e')),
           );
         }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isUploading = false);
+      } finally {
+        if (mounted) {
+          setState(() => _isUploading = false);
+        }
       }
     }
   }
-}
 
   Future<void> _handleLogout() async {
     await _supabase.auth.signOut();
@@ -194,7 +181,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   Widget _buildHeroSection() {
     String statusText;
     if (_isUploading) {
-      statusText = "Preparing validation...";
+      statusText = "Processing...";
     } else if (_isRecording) {
       statusText = "Recording... Tap to stop";
     } else {
@@ -239,7 +226,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
           .stream(primaryKey: ['id'])
           .eq('account_id', _accountId!)
           .order('created_at', ascending: false)
-          .limit(10),
+          .limit(20),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());

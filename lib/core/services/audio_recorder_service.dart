@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data'; 
 import 'package:flutter/foundation.dart';
@@ -26,7 +26,6 @@ class AudioRecorderService {
             .getUserMedia(web.MediaStreamConstraints(audio: true.toJS))
             .toDart;
         
-        // FIX: Cast JSAny? to web.MediaStream to access getTracks()
         if (jsAnyStream != null) {
           final stream = jsAnyStream as web.MediaStream;
           final tracks = stream.getTracks().toDart;
@@ -52,7 +51,6 @@ class AudioRecorderService {
             .getUserMedia(web.MediaStreamConstraints(audio: true.toJS))
             .toDart;
             
-        // FIX: Cast JSAny? to web.MediaStream
         if (jsAnyStream != null) {
           _mediaStream = jsAnyStream as web.MediaStream;
           _mediaRecorder = web.MediaRecorder(_mediaStream!);
@@ -106,7 +104,6 @@ class AudioRecorderService {
         if (_mediaStream != null) {
           final tracks = _mediaStream!.getTracks().toDart;
           for (var track in tracks) {
-            // FIX: Cast JSAny? to web.MediaStreamTrack to access stop()
             (track as web.MediaStreamTrack).stop();
           }
           _mediaStream = null;
@@ -118,6 +115,8 @@ class AudioRecorderService {
     return path != null ? await File(path).readAsBytes() : null;
   }
 
+  /// Upload audio and create voice note record
+  /// Transcription will be triggered automatically via database trigger
   Future<String?> uploadAudio({
     required Uint8List bytes, 
     required String projectId, 
@@ -130,21 +129,32 @@ class AudioRecorderService {
       const ext = kIsWeb ? 'webm' : 'm4a';
       final path = 'log_${DateTime.now().millisecondsSinceEpoch}.$ext';
       
+      // Upload to storage
       await _supabase.storage.from('voice-notes').uploadBinary(
         path, bytes, fileOptions: const FileOptions(contentType: 'audio/$ext', upsert: true)
       );
       
       final String url = _supabase.storage.from('voice-notes').getPublicUrl(path);
       
+      // Create voice note record with status 'processing'
+      // This will automatically trigger the transcribe-audio Edge Function
       final res = await _supabase.from('voice_notes').insert({
-        'user_id': userId, 'project_id': projectId, 'account_id': accountId, 
-        'audio_url': url, 'parent_id': parentId, 'recipient_id': recipientId, 'status': 'processing'
+        'user_id': userId, 
+        'project_id': projectId, 
+        'account_id': accountId, 
+        'audio_url': url, 
+        'parent_id': parentId, 
+        'recipient_id': recipientId, 
+        'status': 'processing'
       }).select().single();
       
+      // Trigger transcription Edge Function
       try {
         await _supabase.functions.invoke('transcribe-audio', body: {'record': res});
+        debugPrint("✅ Transcription triggered for note: ${res['id']}");
       } catch (e) {
-        debugPrint("Transcription trigger warning: $e");
+        debugPrint("⚠️ Transcription trigger warning: $e");
+        // Don't throw - the database trigger should still handle it
       }
       
       return url;
