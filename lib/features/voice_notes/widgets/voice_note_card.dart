@@ -7,6 +7,7 @@ import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_audio_playe
 import 'package:houzzdat_app/features/voice_notes/widgets/transcription_display.dart';
 
 /// Main voice note card - orchestrates all components
+/// Updated to pass isEdited to TranscriptionDisplay
 class VoiceNoteCard extends StatefulWidget {
   final Map<String, dynamic> note;
   final bool isReplying;
@@ -110,11 +111,12 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
             // Audio Player Section
             VoiceNoteAudioPlayer(audioUrl: widget.note['audio_url']),
 
-            // Transcription Section
+            // Transcription Section - NOW WITH isEdited PARAMETER
             TranscriptionDisplay(
               noteId: widget.note['id'],
               transcription: widget.note['transcription'],
               status: widget.note['status'] ?? '',
+              isEdited: isEdited, // CRITICAL: Pass edit status
             ),
 
             // Reply Button Section

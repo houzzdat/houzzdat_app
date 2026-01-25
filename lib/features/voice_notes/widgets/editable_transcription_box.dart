@@ -1,12 +1,14 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 
 /// Reusable component for displaying and editing transcription text
+/// Now supports locked state to prevent edits
 class EditableTranscriptionBox extends StatefulWidget {
   final String title;
   final String initialText;
   final bool isNativeLanguage;
   final bool isSaving;
+  final bool isLocked; // NEW: Prevents editing if true
   final Function(String) onSave;
 
   const EditableTranscriptionBox({
@@ -15,6 +17,7 @@ class EditableTranscriptionBox extends StatefulWidget {
     required this.initialText,
     required this.isNativeLanguage,
     required this.isSaving,
+    this.isLocked = false, // NEW: Default to not locked
     required this.onSave,
   });
 
@@ -47,6 +50,16 @@ class _EditableTranscriptionBoxState extends State<EditableTranscriptionBox> {
   }
 
   void _handleEdit() {
+    // CRITICAL: Don't allow editing if locked
+    if (widget.isLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ This transcription has already been edited. No further changes allowed.'),
+          backgroundColor: AppTheme.warningOrange,
+        ),
+      );
+      return;
+    }
     setState(() => _isEditing = true);
   }
 
@@ -73,9 +86,11 @@ class _EditableTranscriptionBoxState extends State<EditableTranscriptionBox> {
             : AppTheme.infoBlue.withOpacity(0.05),
         borderRadius: BorderRadius.circular(AppTheme.radiusM),
         border: Border.all(
-          color: widget.isNativeLanguage
-              ? AppTheme.textSecondary.withOpacity(0.2)
-              : AppTheme.infoBlue.withOpacity(0.1),
+          color: widget.isLocked
+              ? AppTheme.warningOrange.withOpacity(0.3) // Show locked state
+              : widget.isNativeLanguage
+                  ? AppTheme.textSecondary.withOpacity(0.2)
+                  : AppTheme.infoBlue.withOpacity(0.1),
         ),
       ),
       child: Column(
@@ -91,25 +106,36 @@ class _EditableTranscriptionBoxState extends State<EditableTranscriptionBox> {
                     Icon(Icons.translate, size: 14, color: AppTheme.infoBlue),
                     const SizedBox(width: AppTheme.spacingS),
                   ],
+                  if (widget.isLocked) ...[
+                    const Icon(Icons.lock, size: 14, color: AppTheme.warningOrange),
+                    const SizedBox(width: AppTheme.spacingS),
+                  ],
                   Text(
                     widget.title,
                     style: AppTheme.caption.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: widget.isNativeLanguage 
-                          ? AppTheme.textSecondary 
-                          : AppTheme.infoBlue,
+                      color: widget.isLocked
+                          ? AppTheme.warningOrange
+                          : widget.isNativeLanguage 
+                              ? AppTheme.textSecondary 
+                              : AppTheme.infoBlue,
                     ),
                   ),
                 ],
               ),
               if (!_isEditing)
                 IconButton(
-                  icon: const Icon(Icons.edit, size: 16),
+                  icon: Icon(
+                    widget.isLocked ? Icons.lock : Icons.edit,
+                    size: 16,
+                  ),
                   onPressed: _handleEdit,
-                  tooltip: 'Edit transcription',
+                  tooltip: widget.isLocked ? 'Editing locked' : 'Edit transcription',
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  color: AppTheme.primaryIndigo,
+                  color: widget.isLocked 
+                      ? AppTheme.warningOrange 
+                      : AppTheme.primaryIndigo,
                 ),
             ],
           ),
@@ -153,7 +179,7 @@ class _EditableTranscriptionBoxState extends State<EditableTranscriptionBox> {
                               ),
                             )
                           : const Icon(Icons.save, size: 16),
-                      label: Text(widget.isSaving ? 'Saving...' : 'Save'),
+                      label: Text(widget.isSaving ? 'Saving...' : 'Save (One-Time Only)'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.successGreen,
                         foregroundColor: Colors.white,

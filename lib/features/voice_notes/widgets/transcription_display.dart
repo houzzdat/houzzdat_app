@@ -4,17 +4,19 @@ import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/editable_transcription_box.dart';
 
-/// Component for displaying and managing transcriptions
+/// Component for displaying and managing transcriptions with ONE-TIME edit limit
 class TranscriptionDisplay extends StatefulWidget {
   final String noteId;
   final String? transcription;
   final String status;
+  final bool? isEdited;
 
   const TranscriptionDisplay({
     super.key,
     required this.noteId,
     required this.transcription,
     required this.status,
+    this.isEdited,
   });
 
   @override
@@ -117,6 +119,18 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
   }
 
   Future<void> _handleSave(String originalText, String englishText) async {
+    // CRITICAL: Check if already edited
+    if (widget.isEdited == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ This transcription has already been edited. Only one edit is allowed.'),
+          backgroundColor: AppTheme.warningOrange,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isSaving = true);
 
     try {
@@ -134,7 +148,7 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
           .from('voice_notes')
           .update({
             'transcription': newTranscription,
-            'is_edited': true,
+            'is_edited': true, // Mark as edited - prevents future edits
           })
           .eq('id', widget.noteId);
 
@@ -143,9 +157,9 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ Transcription updated!'),
+            content: Text('✅ Transcription updated! (No further edits allowed)'),
             backgroundColor: AppTheme.successGreen,
-            duration: Duration(seconds: 2),
+            duration: Duration(seconds: 3),
           ),
         );
       }
@@ -196,6 +210,9 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
     final original = _parsedTranscription['original']!;
     final translated = _parsedTranscription['translated']!;
     final isEnglishOnly = language.toLowerCase() == 'english';
+    
+    // CRITICAL: Check if already edited
+    final alreadyEdited = widget.isEdited == true;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -204,6 +221,34 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
         
         _buildLanguageBadge(language),
 
+        // Show warning if already edited
+        if (alreadyEdited) ...[
+          Container(
+            padding: const EdgeInsets.all(AppTheme.spacingM),
+            margin: const EdgeInsets.only(bottom: AppTheme.spacingM),
+            decoration: BoxDecoration(
+              color: AppTheme.warningOrange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(AppTheme.radiusM),
+              border: Border.all(color: AppTheme.warningOrange.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.lock, size: 16, color: AppTheme.warningOrange),
+                const SizedBox(width: AppTheme.spacingS),
+                Expanded(
+                  child: Text(
+                    'This transcription has been edited. No further changes allowed.',
+                    style: AppTheme.bodySmall.copyWith(
+                      color: AppTheme.warningOrange,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
         // Original Language (if not English)
         if (!isEnglishOnly && original.isNotEmpty) ...[
           EditableTranscriptionBox(
@@ -211,6 +256,7 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
             initialText: original,
             isNativeLanguage: true,
             isSaving: _isSaving,
+            isLocked: alreadyEdited, // Pass locked state
             onSave: (newOriginal) {
               _handleSave(newOriginal, translated);
             },
@@ -225,6 +271,7 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
             initialText: isEnglishOnly ? original : translated,
             isNativeLanguage: false,
             isSaving: _isSaving,
+            isLocked: alreadyEdited, // Pass locked state
             onSave: (newEnglish) {
               _handleSave(original, newEnglish);
             },
