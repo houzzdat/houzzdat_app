@@ -8,7 +8,7 @@ import 'package:houzzdat_app/features/dashboard/tabs/users_management_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/feed_tab.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/logout_dialog.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/custom_bottom_nav.dart';
-import 'package:houzzdat_app/features/dashboard/widgets/layout_toggle_button.dart'; // Add this import
+import 'package:houzzdat_app/features/dashboard/widgets/layout_toggle_button.dart';
 
 class ManagerDashboardKanban extends StatefulWidget {
   const ManagerDashboardKanban({super.key});
