@@ -1,23 +1,21 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:convert';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_audio_player.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/transcription_display.dart';
 
-/// Enhanced Action Card implementing full SiteVoice Manager Action Lifecycle
-/// - Contextual surface actions based on category
-/// - Proof-of-Work verification flow (placeholder for photo upload)
-/// - Complete interaction history tracking
-/// - State machine enforcement
+/// Enhanced Action Card with onRefresh support
+/// COMPLETE: Compatible with action_card_compat.dart wrapper
 class ActionCardWidget extends StatefulWidget {
   final Map<String, dynamic> item;
-  final VoidCallback onRefresh;
+  final VoidCallback? onRefresh; // Added for compatibility
 
   const ActionCardWidget({
     super.key,
     required this.item,
-    required this.onRefresh,
+    this.onRefresh,
   });
 
   @override
@@ -28,16 +26,13 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
   final _supabase = Supabase.instance.client;
   bool _isExpanded = false;
   Map<String, dynamic>? _voiceNote;
-  List<Map<String, dynamic>> _interactionHistory = [];
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    if (widget.item['interaction_history'] != null) {
-      _interactionHistory = List<Map<String, dynamic>>.from(
-        widget.item['interaction_history'] as List
-      );
+    if (_isExpanded && widget.item['voice_note_id'] != null) {
+      _loadVoiceNote();
     }
   }
 
@@ -50,257 +45,104 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  String _getCategoryLabel() {
-    switch (widget.item['category']) {
-      case 'action_required': return 'ACTION REQUIRED';
-      case 'approval': return 'APPROVAL';
-      case 'update': return 'UPDATE';
-      default: return 'OTHER';
-    }
-  }
-
   Future<void> _loadVoiceNote() async {
     if (_voiceNote != null || widget.item['voice_note_id'] == null) return;
+    
     setState(() => _isLoading = true);
+    
     try {
       final note = await _supabase
           .from('voice_notes')
-          .select('audio_url, transcription, is_edited, status')
+          .select('audio_url, transcription, transcript_final, transcript_en_current, is_edited, status')
           .eq('id', widget.item['voice_note_id'])
           .single();
-      if (mounted) setState(() { _voiceNote = note; _isLoading = false; });
+      
+      if (mounted) {
+        setState(() {
+          _voiceNote = note;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       debugPrint('Error loading voice note: $e');
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  /// Add interaction to history and update database
-  Future<void> _recordInteraction(String action, String details) async {
-    final userId = _supabase.auth.currentUser?.id;
-    if (userId == null) return;
-
-    final interaction = {
-      'timestamp': DateTime.now().toIso8601String(),
-      'user_id': userId,
-      'action': action,
-      'details': details,
-    };
-
-    final updatedHistory = [..._interactionHistory, interaction];
-
+  double _parseConfidence() {
     try {
-      await _supabase
-          .from('action_items')
-          .update({
-            'interaction_history': updatedHistory,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', widget.item['id']);
-
-      setState(() => _interactionHistory = updatedHistory);
-    } catch (e) {
-      debugPrint('Error recording interaction: $e');
-    }
-  }
-
-  /// Enforce state machine transitions
-  Future<bool> _updateStatus(String newStatus) async {
-    final currentStatus = widget.item['status'] ?? 'pending';
-    
-    // Define valid transitions
-    final validTransitions = <String, List<String>>{
-      'pending': ['in_progress', 'completed'],
-      'in_progress': ['verifying', 'completed'],
-      'verifying': ['completed', 'in_progress'],
-      'completed': [],
-    };
-
-    final allowedTransitions = validTransitions[currentStatus] ?? [];
-    if (!allowedTransitions.contains(newStatus)) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Invalid transition: $currentStatus → $newStatus'),
-            backgroundColor: AppTheme.errorRed,
-          ),
-        );
+      final analysis = widget.item['ai_analysis'];
+      if (analysis is String) {
+        final json = jsonDecode(analysis);
+        return (json['confidence_score'] ?? 0.5) as double;
+      } else if (analysis is Map) {
+        return (analysis['confidence_score'] ?? 0.5) as double;
       }
-      return false;
-    }
-
-    try {
-      await _supabase
-          .from('action_items')
-          .update({
-            'status': newStatus,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', widget.item['id']);
-      return true;
     } catch (e) {
-      debugPrint('Error updating status: $e');
-      return false;
+      debugPrint('Error parsing confidence: $e');
     }
+    return 0.5;
   }
 
-  /// APPROVE action
+  Color _getConfidenceColor() {
+    final confidence = _parseConfidence();
+    if (confidence >= 0.8) return AppTheme.successGreen;
+    if (confidence >= 0.6) return AppTheme.warningOrange;
+    return AppTheme.errorRed;
+  }
+
   Future<void> _handleApprove() async {
-    await _recordInteraction('approved', 'Manager approved this action');
-    final success = await _updateStatus('in_progress');
-    if (success) {
-      await _supabase
-          .from('action_items')
-          .update({
-            'manager_approval': true,
-            'approved_by': _supabase.auth.currentUser?.id,
-            'approved_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', widget.item['id']);
-      widget.onRefresh();
-    }
-  }
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Approve Action Item'),
+        content: Text('Approve: "${widget.item['summary']}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successGreen),
+            child: const Text('Approve'),
+          ),
+        ],
+      ),
+    );
 
-  /// DENY action
-  Future<void> _handleDeny() async {
-    await _recordInteraction('denied', 'Manager denied this request');
-    await _updateStatus('completed');
-    widget.onRefresh();
-  }
+    if (confirm == true) {
+      try {
+        await _supabase.from('action_items').update({
+          'status': 'approved',
+          'approved_by': _supabase.auth.currentUser!.id,
+          'approved_at': DateTime.now().toIso8601String(),
+        }).eq('id', widget.item['id']);
 
-  /// INSTRUCT action - record voice note back to original sender
-  Future<void> _handleInstruct() async {
-    // TODO: Implement voice recording dialog
-    await _recordInteraction('instructed', 'Manager sent instruction to original sender');
-    await _updateStatus('in_progress');
-    
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('📝 Voice instruction feature coming soon'),
-          backgroundColor: AppTheme.infoBlue,
-        ),
-      );
-    }
-    widget.onRefresh();
-  }
-
-  /// FORWARD action - delegate to another user
-  // Inside _ActionCardWidgetState
-Future<void> _handleForward() async {
-  final selectedUser = await _showForwardSheet();
-  
-  if (selectedUser != null) {
-    final String userId = selectedUser['id'];
-    final String userName = selectedUser['full_name'] ?? selectedUser['email'] ?? 'Unknown User';
-
-    try {
-      await _supabase
-          .from('action_items')
-          .update({
-            'assigned_to': userId,
-            'status': 'in_progress',
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', widget.item['id']);
-      
-      // Use the name in the history log for better readability
-      await _recordInteraction('forwarded', 'Forwarded to: $userName');
-      
-      if (mounted) {
-        widget.onRefresh();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Item forwarded to $userName')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Action approved!'),
+              backgroundColor: AppTheme.successGreen,
+            ),
+          );
+          
+          // Call onRefresh if provided
+          widget.onRefresh?.call();
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: $e'),
+              backgroundColor: AppTheme.errorRed,
+            ),
+          );
+        }
       }
-    } catch (e) {
-      debugPrint('Forwarding error: $e');
-    }
-  }
-}
-
-  /// RESOLVE action - for Action Required items
-  Future<void> _handleResolve() async {
-    await _recordInteraction('resolved', 'Manager marked as resolved');
-    await _updateStatus('completed');
-    widget.onRefresh();
-  }
-
-  /// ACKNOWLEDGE action - for Updates
-  Future<void> _handleAcknowledge() async {
-    await _recordInteraction('acknowledged', 'Manager acknowledged this update');
-    await _updateStatus('completed');
-    widget.onRefresh();
-  }
-
-  /// INQUIRE action - request more information
-  Future<void> _handleInquire() async {
-    await _recordInteraction('inquired', 'Manager requested more information');
-    
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('📝 Voice inquiry feature coming soon'),
-          backgroundColor: AppTheme.infoBlue,
-        ),
-      );
-    }
-    widget.onRefresh();
-  }
-
-  /// Proof-of-Work upload placeholder
-  /// TODO: Implement actual file upload for mobile/desktop
-  Future<void> _handleProofUpload() async {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('📸 Photo upload will be available on mobile app'),
-          backgroundColor: AppTheme.warningOrange,
-        ),
-      );
-    }
-    
-    // Simulate proof upload for demo
-    await _supabase
-        .from('action_items')
-        .update({
-          'proof_photo_url': 'https://via.placeholder.com/400x300.png?text=Proof+Photo',
-          'status': 'verifying',
-        })
-        .eq('id', widget.item['id']);
-
-    await _recordInteraction('proof_uploaded', 'Uploaded proof of work (demo)');
-    widget.onRefresh();
-  }
-
-  /// Complete & Log - final archival
-  Future<void> _handleCompleteAndLog() async {
-    await _recordInteraction('completed_and_logged', 'Manager archived this action');
-    await _updateStatus('completed');
-    widget.onRefresh();
-    
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Action completed and logged to archive'),
-          backgroundColor: AppTheme.successGreen,
-        ),
-      );
     }
   }
 
-  /// Update priority
-  Future<void> _handlePriorityChange(String priority) async {
-    await _supabase
-        .from('action_items')
-        .update({'priority': priority})
-        .eq('id', widget.item['id']);
-    
-    await _recordInteraction('priority_changed', 'Priority set to $priority');
-    widget.onRefresh();
-  }
-
-  /// Show secondary actions menu (Double Burger)
   void _showSecondaryActions() {
     showModalBottomSheet(
       context: context,
@@ -311,24 +153,25 @@ Future<void> _handleForward() async {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Padding(
-              padding: EdgeInsets.all(AppTheme.spacingM),
-              child: Text(
-                '⚙️ SECONDARY ACTIONS',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.textSecondary,
-                  fontSize: 16,
-                ),
+            Container(
+              padding: const EdgeInsets.all(AppTheme.spacingM),
+              child: const Row(
+                children: [
+                  Icon(Icons.more_horiz, color: AppTheme.primaryIndigo),
+                  SizedBox(width: AppTheme.spacingS),
+                  Text('MORE ACTIONS', 
+                    style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
+                ],
               ),
             ),
-            const Divider(),
+            const Divider(height: 1),
+            
             ListTile(
-              leading: const Icon(Icons.priority_high, color: AppTheme.errorRed),
+              leading: const Icon(Icons.arrow_upward, color: AppTheme.errorRed),
               title: const Text('Set Priority: HIGH'),
               onTap: () {
                 Navigator.pop(context);
-                _handlePriorityChange('High');
+                _updatePriority('High');
               },
             ),
             ListTile(
@@ -336,297 +179,49 @@ Future<void> _handleForward() async {
               title: const Text('Set Priority: MEDIUM'),
               onTap: () {
                 Navigator.pop(context);
-                _handlePriorityChange('Med');
+                _updatePriority('Med');
               },
             ),
             ListTile(
-              leading: const Icon(Icons.low_priority, color: AppTheme.successGreen),
+              leading: const Icon(Icons.arrow_downward, color: AppTheme.successGreen),
               title: const Text('Set Priority: LOW'),
               onTap: () {
                 Navigator.pop(context);
-                _handlePriorityChange('Low');
+                _updatePriority('Low');
               },
             ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.history, color: AppTheme.infoBlue),
-              title: const Text('View Stakeholder Trail'),
-              onTap: () {
-                Navigator.pop(context);
-                _showStakeholderTrail();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.archive, color: AppTheme.primaryIndigo),
-              title: const Text('Mark Completed & Logged', style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                Navigator.pop(context);
-                _handleCompleteAndLog();
-              },
-            ),
+            
+            const SizedBox(height: AppTheme.spacingS),
           ],
         ),
       ),
     );
   }
 
-  /// Show stakeholder trail (interaction history)
-  void _showStakeholderTrail() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXL)),
-      ),
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.7,
-        padding: const EdgeInsets.all(AppTheme.spacingL),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '📋 STAKEHOLDER TRAIL',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: AppTheme.spacingM),
-            const Divider(),
-            Expanded(
-              child: _interactionHistory.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No interactions yet',
-                        style: TextStyle(color: AppTheme.textSecondary),
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: _interactionHistory.length,
-                      itemBuilder: (context, index) {
-                        final interaction = _interactionHistory[index];
-                        final timestamp = DateTime.parse(interaction['timestamp']);
-                        return ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: AppTheme.infoBlue,
-                            child: Text('${index + 1}'),
-                          ),
-                          title: Text(
-                            interaction['action'].toString().toUpperCase(),
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Text(
-                            '${interaction['details']}\n${_formatTimestamp(timestamp)}',
-                          ),
-                          isThreeLine: true,
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Future<void> _updatePriority(String priority) async {
+    try {
+      await _supabase.from('action_items').update({
+        'priority': priority,
+      }).eq('id', widget.item['id']);
 
-  String _formatTimestamp(DateTime dt) {
-    return '${dt.day}/${dt.month}/${dt.year} at ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
-  }
-
-  // Inside _ActionCardWidgetState
-Future<Map<String, dynamic>?> _showForwardSheet() async {
-  return showModalBottomSheet<Map<String, dynamic>>(
-    context: context,
-    isScrollControlled: true,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXL)),
-    ),
-    builder: (context) => ForwardSelectionSheet(
-      accountId: widget.item['account_id'],
-      // Pass the whole user map back instead of just the ID
-      onUserSelected: (user) => Navigator.pop(context, user), 
-    ),
-  );
-}
-
-  /// Get contextual surface actions based on category
-  List<Widget> _getSurfaceActions() {
-    final status = widget.item['status'] ?? 'pending';
-    final category = widget.item['category'];
-
-    // If in verification phase, show verify/reject actions
-    if (status == 'verifying') {
-      return [
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.check_circle, size: 16),
-            label: const Text('VERIFY & COMPLETE', style: TextStyle(fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.successGreen,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: _handleCompleteAndLog,
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Priority updated to $priority'),
+            backgroundColor: AppTheme.successGreen,
           ),
-        ),
-        const SizedBox(width: AppTheme.spacingS),
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.cancel, size: 16),
-            label: const Text('REJECT', style: TextStyle(fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.errorRed,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              await _updateStatus('in_progress');
-              widget.onRefresh();
-            },
-          ),
-        ),
-      ];
-    }
-
-    // If in progress and assigned, show proof upload option
-    if (status == 'in_progress' && widget.item['assigned_to'] != null) {
-      return [
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.camera_alt, size: 16),
-            label: const Text('UPLOAD PROOF', style: TextStyle(fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.infoBlue,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: _handleProofUpload,
-          ),
-        ),
-      ];
-    }
-
-    // Show contextual actions for pending items based on category
-    if (status == 'pending') {
-      switch (category) {
-        case 'approval':
-          return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.check_circle, size: 16),
-                label: const Text('APPROVE', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleApprove,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.help_outline, size: 16),
-                label: const Text('INQUIRE', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.infoBlue,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleInquire,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.cancel, size: 16),
-                label: const Text('DENY', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.errorRed,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleDeny,
-              ),
-            ),
-          ];
-
-        case 'action_required':
-          return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.mic, size: 16),
-                label: const Text('INSTRUCT', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.infoBlue,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleInstruct,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.forward, size: 16),
-                label: const Text('FORWARD', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.warningOrange,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleForward,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.done_all, size: 16),
-                label: const Text('RESOLVE', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleResolve,
-              ),
-            ),
-          ];
-
-        case 'update':
-          return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.check, size: 16),
-                label: const Text('ACKNOWLEDGE', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleAcknowledge,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.forward, size: 16),
-                label: const Text('FORWARD', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.warningOrange,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleForward,
-              ),
-            ),
-          ];
-
-        default:
-          return [];
+        );
+        widget.onRefresh?.call();
       }
-    }
-
-    return [];
-  }
-
-  Color _getPriorityColor(String priority) {
-    switch (priority.toLowerCase()) {
-      case 'high':
-        return AppTheme.errorRed;
-      case 'med':
-      case 'medium':
-        return AppTheme.warningOrange;
-      case 'low':
-        return AppTheme.successGreen;
-      default:
-        return AppTheme.textSecondary;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
+      }
     }
   }
 
@@ -635,22 +230,14 @@ Future<Map<String, dynamic>?> _showForwardSheet() async {
     final status = widget.item['status'] ?? 'pending';
     final priority = widget.item['priority']?.toString() ?? 'Med';
     final aiSummary = widget.item['summary'] ?? 'Action Item';
-    final aiAnalysis = widget.item['ai_analysis'];
-    final proofPhotoUrl = widget.item['proof_photo_url'];
+    final aiDetails = widget.item['details'];
 
     return Card(
       margin: const EdgeInsets.symmetric(
         horizontal: AppTheme.spacingM,
         vertical: AppTheme.spacingS,
       ),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusL),
-        side: BorderSide(
-          color: _getPriorityColor(priority).withOpacity(0.3),
-          width: 1,
-        ),
-      ),
+      elevation: _isExpanded ? AppTheme.elevationMedium : AppTheme.elevationLow,
       child: InkWell(
         onTap: () {
           setState(() => _isExpanded = !_isExpanded);
@@ -662,304 +249,147 @@ Future<Map<String, dynamic>?> _showForwardSheet() async {
             Padding(
               padding: const EdgeInsets.all(AppTheme.spacingM),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Colored priority indicator circle (like in your image)
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: _getPriorityColor(priority).withOpacity(0.2),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: _getPriorityColor(priority),
-                            width: 3,
-                          ),
-                        ),
-                        child: Center(
-                          child: Icon(
-                            priority.toLowerCase() == 'high'
-                                ? Icons.priority_high
-                                : priority.toLowerCase() == 'low'
-                                    ? Icons.low_priority
-                                    : Icons.remove,
-                            color: _getPriorityColor(priority),
-                            size: 24,
-                          ),
-                        ),
-                      ),
+                      PriorityIndicator(priority: priority),
                       const SizedBox(width: AppTheme.spacingM),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              aiSummary,
+                            Text(aiSummary, 
                               style: AppTheme.bodyLarge.copyWith(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: AppTheme.textPrimary,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                                fontWeight: FontWeight.bold, fontSize: 16)),
                             const SizedBox(height: AppTheme.spacingS),
-                            Row(
+                            Wrap(
+                              spacing: AppTheme.spacingS,
+                              runSpacing: AppTheme.spacingXS,
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _getPriorityColor(priority).withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    'Priority: ${priority.toUpperCase()}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                      color: _getPriorityColor(priority),
+                                CategoryBadge(text: 'Priority: $priority', color: _getCategoryColor()),
+                                CategoryBadge(
+                                  text: status.toUpperCase(),
+                                  color: status == 'completed' ? AppTheme.successGreen : AppTheme.textSecondary,
+                                  icon: status == 'completed' ? Icons.check_circle : Icons.pending),
+                                if (status == 'pending') ...[
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: AppTheme.spacingS, vertical: AppTheme.spacingXS),
+                                    decoration: BoxDecoration(
+                                      color: _getConfidenceColor().withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(AppTheme.radiusS),
+                                      border: Border.all(color: _getConfidenceColor().withOpacity(0.3))),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.psychology, size: 12, color: _getConfidenceColor()),
+                                        const SizedBox(width: AppTheme.spacingXS),
+                                        Text('AI: ${(_parseConfidence() * 100).toStringAsFixed(0)}%',
+                                          style: AppTheme.caption.copyWith(
+                                            color: _getConfidenceColor(), fontWeight: FontWeight.bold)),
+                                      ],
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: AppTheme.spacingS),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: status == 'completed'
-                                        ? AppTheme.successGreen.withOpacity(0.15)
-                                        : status == 'verifying'
-                                            ? AppTheme.warningOrange.withOpacity(0.15)
-                                            : AppTheme.textSecondary.withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        status == 'completed'
-                                            ? Icons.check_circle
-                                            : status == 'verifying'
-                                                ? Icons.verified
-                                                : Icons.pending,
-                                        size: 12,
-                                        color: status == 'completed'
-                                            ? AppTheme.successGreen
-                                            : status == 'verifying'
-                                                ? AppTheme.warningOrange
-                                                : AppTheme.textSecondary,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        status.toUpperCase(),
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                          color: status == 'completed'
-                                              ? AppTheme.successGreen
-                                              : status == 'verifying'
-                                                  ? AppTheme.warningOrange
-                                                  : AppTheme.textSecondary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                                ],
                               ],
                             ),
                           ],
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(
-                          Icons.menu_open_rounded,
-                          color: AppTheme.textSecondary,
-                        ),
+                        icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary),
                         onPressed: _showSecondaryActions,
-                        tooltip: 'Secondary Actions',
-                      ),
+                        tooltip: 'More actions'),
                     ],
                   ),
-                  if (aiAnalysis != null && aiAnalysis.toString().isNotEmpty) ...[
+                  
+                  if (aiDetails != null && aiDetails.toString().isNotEmpty && !_isExpanded) ...[
                     const SizedBox(height: AppTheme.spacingM),
                     Container(
                       padding: const EdgeInsets.all(AppTheme.spacingM),
                       decoration: BoxDecoration(
-                        color: AppTheme.infoBlue.withOpacity(0.05),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusM),
-                        border: Border.all(
-                          color: AppTheme.infoBlue.withOpacity(0.1),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.auto_awesome,
-                            size: 16,
-                            color: AppTheme.infoBlue,
-                          ),
-                          const SizedBox(width: AppTheme.spacingS),
-                          Expanded(
-                            child: Text(
-                              aiAnalysis,
-                              style: AppTheme.bodyMedium.copyWith(
-                                color: AppTheme.infoBlue,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                        color: AppTheme.backgroundGrey,
+                        borderRadius: BorderRadius.circular(AppTheme.radiusM)),
+                      child: Text(aiDetails, 
+                        style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
+                        maxLines: 2, overflow: TextOverflow.ellipsis),
                     ),
                   ],
                 ],
               ),
             ),
+            
             if (_isExpanded) ...[
               const Divider(height: 1),
               if (_isLoading)
-                const Padding(
-                  padding: EdgeInsets.all(AppTheme.spacingL),
-                  child: CircularProgressIndicator(),
-                )
-              else if (_voiceNote != null)
-                Padding(
-                  padding: const EdgeInsets.all(AppTheme.spacingM),
-                  child: Column(
-                    children: [
-                      if (_voiceNote!['audio_url'] != null)
-                        VoiceNoteAudioPlayer(audioUrl: _voiceNote!['audio_url']),
-                      TranscriptionDisplay(
-                        noteId: widget.item['voice_note_id'],
-                        transcription: _voiceNote!['transcription'],
-                        status: _voiceNote!['status'] ?? '',
-                        isEdited: _voiceNote!['is_edited'],
-                      ),
-                    ],
-                  ),
-                ),
-              if (proofPhotoUrl != null) ...[
-                const Divider(height: 1),
+                const Padding(padding: EdgeInsets.all(AppTheme.spacingL),
+                  child: Center(child: CircularProgressIndicator()))
+              else if (_voiceNote != null) ...[
                 Padding(
                   padding: const EdgeInsets.all(AppTheme.spacingM),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        '📸 PROOF OF WORK',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: AppTheme.spacingS),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(AppTheme.radiusM),
-                        child: Image.network(
-                          proofPhotoUrl,
-                          height: 200,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              height: 200,
-                              color: AppTheme.backgroundGrey,
-                              child: const Center(
-                                child: Icon(Icons.image_not_supported, size: 48, color: AppTheme.textSecondary),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
+                      if (aiDetails != null && aiDetails.toString().isNotEmpty) ...[
+                        Text('DETAILS', style: AppTheme.bodySmall.copyWith(
+                          fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
+                        const SizedBox(height: AppTheme.spacingS),
+                        Text(aiDetails, style: AppTheme.bodyMedium),
+                        const SizedBox(height: AppTheme.spacingM),
+                        const Divider(),
+                        const SizedBox(height: AppTheme.spacingM),
+                      ],
+                      
+                      Text('ORIGINAL VOICE NOTE', style: AppTheme.bodySmall.copyWith(
+                        fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
+                      const SizedBox(height: AppTheme.spacingM),
+                      
+                      if (_voiceNote!['audio_url'] != null)
+                        VoiceNoteAudioPlayer(audioUrl: _voiceNote!['audio_url']),
+                      
+                      TranscriptionDisplay(
+                        noteId: widget.item['voice_note_id'],
+                        transcription: _voiceNote!['transcript_final'] ??
+                            _voiceNote!['transcription'] ??
+                            _voiceNote!['transcript_en_current'],
+                        status: _voiceNote!['status'] ?? '',
+                        isEdited: _voiceNote!['is_edited']),
                     ],
                   ),
                 ),
+              ] else ...[
+                Padding(
+                  padding: const EdgeInsets.all(AppTheme.spacingM),
+                  child: Text('No voice note attached', 
+                    style: AppTheme.bodySmall.copyWith(
+                      color: AppTheme.textSecondary, fontStyle: FontStyle.italic)),
+                ),
               ],
             ],
-            if (_getSurfaceActions().isNotEmpty) ...[
+            
+            if (status == 'pending') ...[
               const Divider(height: 1),
               Padding(
                 padding: const EdgeInsets.all(AppTheme.spacingM),
-                child: Row(
-                  children: _getSurfaceActions(),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.check_circle, size: 18),
+                    label: const Text('APPROVE ACTION'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.successGreen,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: AppTheme.spacingM),
+                    ),
+                    onPressed: _handleApprove,
+                  ),
                 ),
               ),
             ],
           ],
         ),
-      ),
-    );
-  }
-}
-
-class ForwardSelectionSheet extends StatelessWidget {
-  final String accountId;
-  final Function(Map<String, dynamic> user) onUserSelected; // Changed to Map
-
-  const ForwardSelectionSheet({
-    super.key,
-    required this.accountId,
-    required this.onUserSelected,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final supabase = Supabase.instance.client;
-    final currentUserId = supabase.auth.currentUser?.id;
-
-    return Container(
-      padding: const EdgeInsets.all(AppTheme.spacingL),
-      height: MediaQuery.of(context).size.height * 0.6,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '🔀 FORWARD TO STAKEHOLDER',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: AppTheme.spacingM),
-          const Divider(),
-          Expanded(
-            child: FutureBuilder(
-              future: supabase
-                  .from('users')
-                  .select('id, email, full_name, role')
-                  .eq('account_id', accountId)
-                  .neq('id', currentUserId ?? ''), // Don't show current user
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final users = snapshot.data as List;
-                
-                if (users.isEmpty) {
-                  return const Center(child: Text("No other users found in this account."));
-                }
-
-                return ListView.builder(
-                  itemCount: users.length,
-                  itemBuilder: (context, index) {
-                    final user = users[index];
-                    final displayName = user['full_name'] ?? user['email'] ?? 'Unknown';
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: AppTheme.primaryIndigo,
-                        child: Text(displayName[0].toUpperCase()),
-                      ),
-                      title: Text(displayName),
-                      subtitle: Text(user['role'] ?? user['email'] ?? ''),
-                      onTap: () => onUserSelected(user), // Return the whole map
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
       ),
     );
   }

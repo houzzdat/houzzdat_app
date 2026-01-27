@@ -180,6 +180,8 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
           itemCount: notes.length,
           itemBuilder: (context, i) => VoiceNoteCard(
             viewModel: _createViewModel(notes[i]),
+            isReplying: false,
+            onReply: () {}, // No reply functionality in construction home screen
           ),
         );
       },

@@ -185,6 +185,8 @@ class _FeedTabState extends State<FeedTab> {
                     children: [
                       VoiceNoteCard(
                         viewModel: _createViewModel(note),
+                        isReplying: isReplying,
+                        onReply: () => _handleReply(note),
                       ),
                       if (isReplying)
                         Padding(
