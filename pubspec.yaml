@@ -12,6 +12,7 @@ dependencies:
   # Core Logic
   supabase_flutter: ^2.6.0
   provider: ^6.1.1
+  image_picker: ^1.0.4
   
   # Features (Audio & UI)
   record: ^5.1.0

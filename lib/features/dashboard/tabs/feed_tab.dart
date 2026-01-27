@@ -4,6 +4,7 @@ import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/feed_filters_widget.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_card.dart';
+import 'package:houzzdat_app/features/worker/models/voice_note_card_view_model.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'dart:typed_data';
 
@@ -106,6 +107,18 @@ class _FeedTabState extends State<FeedTab> {
     });
   }
 
+  VoiceNoteCardViewModel _createViewModel(Map<String, dynamic> note) {
+    return VoiceNoteCardViewModel(
+      id: note['id']?.toString() ?? '',
+      originalTranscript: note['transcript']?.toString() ?? '',
+      originalLanguageLabel: note['language']?.toString() ?? 'EN',
+      audioUrl: note['audio_url']?.toString() ?? '',
+      translatedTranscript: note['translated_transcript']?.toString(),
+      isEditable: false,
+      isProcessing: note['status']?.toString() == 'processing',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.accountId == null || widget.accountId!.isEmpty) {
@@ -168,10 +181,32 @@ class _FeedTabState extends State<FeedTab> {
                   final note = filteredNotes[i];
                   final isReplying = _replyToId == note['id'];
 
-                  return VoiceNoteCard(
-                    note: note,
-                    isReplying: isReplying,
-                    onReply: () => _handleReply(note),
+                  return Column(
+                    children: [
+                      VoiceNoteCard(
+                        viewModel: _createViewModel(note),
+                      ),
+                      if (isReplying)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.reply, size: 20),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Recording reply...',
+                                  style: TextStyle(fontStyle: FontStyle.italic),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.stop, color: Colors.red),
+                                onPressed: () => _handleReply(note),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   );
                 },
               );

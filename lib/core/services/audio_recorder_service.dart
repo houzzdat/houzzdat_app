@@ -137,7 +137,8 @@ class AudioRecorderService {
       final String url = _supabase.storage.from('voice-notes').getPublicUrl(path);
       
       // Create voice note record with status 'processing'
-      // This will automatically trigger the transcribe-audio Edge Function
+      // The database trigger will automatically call the edge function
+      // DO NOT manually call the edge function - it causes duplicate processing
       final res = await _supabase.from('voice_notes').insert({
         'user_id': userId, 
         'project_id': projectId, 
@@ -145,17 +146,14 @@ class AudioRecorderService {
         'audio_url': url, 
         'parent_id': parentId, 
         'recipient_id': recipientId, 
-        'status': 'processing'
+        'status': 'processing'  // ✅ Correct - let edge function handle rest
       }).select().single();
       
-      // Trigger transcription Edge Function
-      try {
-        await _supabase.functions.invoke('transcribe-audio', body: {'record': res});
-        debugPrint("✅ Transcription triggered for note: ${res['id']}");
-      } catch (e) {
-        debugPrint("⚠️ Transcription trigger warning: $e");
-        // Don't throw - the database trigger should still handle it
-      }
+      debugPrint("✅ Voice note created: ${res['id']}");
+      debugPrint("   Database trigger will handle transcription automatically");
+      
+      // REMOVED: Manual edge function call
+      // The database trigger 'transcribe_on_insert' handles this
       
       return url;
     } catch (e) { 

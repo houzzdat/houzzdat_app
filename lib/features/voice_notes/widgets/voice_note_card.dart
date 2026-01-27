@@ -1,218 +1,108 @@
-import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart';
-import 'package:houzzdat_app/core/theme/app_theme.dart';
-import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:houzzdat_app/features/worker/models/voice_note_card_view_model.dart';
+import 'package:houzzdat_app/features/voice_notes/widgets/editable_transcription_box.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_audio_player.dart';
-import 'package:houzzdat_app/features/voice_notes/widgets/transcription_display.dart';
 
-/// Main voice note card - orchestrates all components
-/// Updated to pass isEdited to TranscriptionDisplay
 class VoiceNoteCard extends StatefulWidget {
-  final Map<String, dynamic> note;
-  final bool isReplying;
-  final VoidCallback onReply;
+  final VoiceNoteCardViewModel viewModel;
 
   const VoiceNoteCard({
-    super.key,
-    required this.note,
-    required this.isReplying,
-    required this.onReply,
-  });
+    Key? key,
+    required this.viewModel,
+  }) : super(key: key);
 
   @override
   State<VoiceNoteCard> createState() => _VoiceNoteCardState();
 }
 
 class _VoiceNoteCardState extends State<VoiceNoteCard> {
-  final _supabase = Supabase.instance.client;
-  Map<String, dynamic>? _details;
-  bool _isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchNoteDetails();
-  }
-
-  Future<void> _fetchNoteDetails() async {
-    try {
-      final project = await _supabase
-          .from('projects')
-          .select('name')
-          .eq('id', widget.note['project_id'])
-          .single();
-      
-      final user = await _supabase
-          .from('users')
-          .select('email')
-          .eq('id', widget.note['user_id'])
-          .single();
-
-      DateTime utcTime = DateTime.parse(widget.note['created_at']);
-      DateTime istTime = utcTime.add(const Duration(hours: 5, minutes: 30));
-
-      if (mounted) {
-        setState(() {
-          _details = {
-            'email': user['email'] ?? 'User',
-            'project_name': project['name'] ?? 'Site',
-            'created_at': DateFormat('MMM d, h:mm a').format(istTime),
-          };
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _details = {
-            'email': 'User',
-            'project_name': 'Site',
-            'created_at': ''
-          };
-          _isLoading = false;
-        });
-      }
-    }
-  }
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(AppTheme.spacingM),
-          child: Center(child: CircularProgressIndicator()),
-        ),
-      );
-    }
-
-    final isThreadedReply = widget.note['parent_id'] != null;
-    final isEdited = widget.note['is_edited'] == true;
+    final vm = widget.viewModel;
 
     return Card(
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppTheme.spacingM,
-        vertical: AppTheme.spacingS,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppTheme.spacingM),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header Section
-            _buildHeader(
-              isThreadedReply: isThreadedReply,
-              isEdited: isEdited,
-            ),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: InkWell(
+        onTap: () => setState(() => _expanded = !_expanded),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _HeaderRow(),
+              const SizedBox(height: 6),
+              _LanguageBadge(vm.originalLanguageLabel),
+              const SizedBox(height: 8),
 
-            const SizedBox(height: AppTheme.spacingM),
+              /// Transcript
+              EditableTranscriptionBox(
+                initialText: vm.transcriptForDisplay(expanded: _expanded),
+                canEdit: _expanded && vm.isEditable,
+                onSave: (text) {
+                  // TODO: Implement save logic
+                },
+              ),
 
-            // Audio Player Section
-            VoiceNoteAudioPlayer(audioUrl: widget.note['audio_url']),
+              /// Audio only when expanded
+              if (_expanded) ...[
+                const SizedBox(height: 12),
+                VoiceNoteAudioPlayer(audioUrl: vm.audioUrl),
+              ],
 
-            // Transcription Section - NOW WITH isEdited PARAMETER
-            TranscriptionDisplay(
-              noteId: widget.note['id'],
-              transcription: widget.note['transcription'],
-              status: widget.note['status'] ?? '',
-              isEdited: isEdited, // CRITICAL: Pass edit status
-            ),
-
-            // Reply Button Section
-            _buildReplyButton(),
-          ],
+              if (vm.isProcessing) ...[
+                const SizedBox(height: 6),
+                _StatusIndicator(),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
-
-  Widget _buildHeader({
-    required bool isThreadedReply,
-    required bool isEdited,
-  }) {
+}
+class _HeaderRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
     return Row(
       children: [
-        CircleAvatar(
-          backgroundColor: isThreadedReply
-              ? AppTheme.infoBlue.withOpacity(0.2)
-              : AppTheme.primaryIndigo,
-          child: Icon(
-            isThreadedReply ? Icons.reply : Icons.mic,
-            color: isThreadedReply ? AppTheme.infoBlue : Colors.white,
-            size: 20,
-          ),
-        ),
-        const SizedBox(width: AppTheme.spacingM),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(
-                    _details!['email'],
-                    style: AppTheme.bodyMedium.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  if (isThreadedReply) ...[
-                    const SizedBox(width: AppTheme.spacingS),
-                    const CategoryBadge(
-                      text: 'REPLY',
-                      color: AppTheme.infoBlue,
-                    ),
-                  ],
-                  if (isEdited) ...[
-                    const SizedBox(width: AppTheme.spacingS),
-                    const CategoryBadge(
-                      text: 'EDITED',
-                      color: AppTheme.warningOrange,
-                      icon: Icons.edit,
-                    ),
-                  ],
-                ],
-              ),
-              Text(
-                _details!['project_name'],
-                style: AppTheme.bodySmall,
-              ),
-            ],
-          ),
-        ),
+        const Icon(Icons.mic, size: 18),
+        const SizedBox(width: 8),
         Text(
-          _details!['created_at'],
-          style: AppTheme.caption,
+          'Voice Note',
+          style: Theme.of(context).textTheme.titleMedium,
         ),
       ],
     );
   }
+}
 
-  Widget _buildReplyButton() {
-    return Column(
-      children: [
-        const SizedBox(height: AppTheme.spacingM),
-        const Divider(height: 1),
-        const SizedBox(height: AppTheme.spacingS),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            icon: Icon(
-              widget.isReplying ? Icons.stop : Icons.reply,
-              size: 18,
-            ),
-            label: Text(
-              widget.isReplying ? "Stop & Send Reply" : "Record Reply",
-              style: const TextStyle(fontSize: 13),
-            ),
-            style: TextButton.styleFrom(
-              foregroundColor: widget.isReplying
-                  ? AppTheme.errorRed
-                  : AppTheme.infoBlue,
-            ),
-            onPressed: widget.onReply,
-          ),
+class _LanguageBadge extends StatelessWidget {
+  final String label;
+  const _LanguageBadge(this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      label: Text(label),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+class _StatusIndicator extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: const [
+        SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
+        SizedBox(width: 6),
+        Text('Processing...'),
       ],
     );
   }
