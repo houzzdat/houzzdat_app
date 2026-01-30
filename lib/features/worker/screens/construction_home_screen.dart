@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_card.dart';
 import 'package:houzzdat_app/features/worker/models/voice_note_card_view_model.dart';
@@ -49,7 +49,14 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
 
   Future<void> _handleRecording() async {
     bool hasPermission = await _recorderService.checkPermission();
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Microphone permission required')),
+        );
+      }
+      return;
+    }
 
     if (!_isRecording) {
       await _recorderService.startRecording();
@@ -59,64 +66,122 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
         _isRecording = false;
         _isUploading = true;
       });
-      
+
       try {
         final audioBytes = await _recorderService.stopRecording();
-        final user = _supabase.auth.currentUser;
-        
-        if (audioBytes != null && user != null) {
-          final userData = await _supabase
-              .from('users')
-              .select('current_project_id, account_id')
-              .eq('id', user.id)
-              .single();
+        if (audioBytes != null && _accountId != null) {
+          final user = _supabase.auth.currentUser;
+          if (user != null) {
+            final userData = await _supabase
+                .from('users')
+                .select('current_project_id')
+                .eq('id', user.id)
+                .single();
+            
+            final projectId = userData['current_project_id'];
+            if (projectId != null) {
+              await _recorderService.uploadAudio(
+                bytes: audioBytes,
+                projectId: projectId,
+                userId: user.id,
+                accountId: _accountId!,
+              );
 
-          await _recorderService.uploadAudio(
-            bytes: audioBytes,
-            projectId: userData['current_project_id'],
-            userId: user.id,
-            accountId: userData['account_id'],
-          );
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ Voice note submitted!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            }
+          }
         }
       } catch (e) {
-        debugPrint("Recording Error: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e')),
+          );
+        }
       } finally {
         if (mounted) setState(() => _isUploading = false);
       }
     }
   }
 
+  Future<void> _handleLogout() async {
+    await _supabase.auth.signOut();
+  }
+
+  /// Creates a ViewModel from the note Map for display
   VoiceNoteCardViewModel _createViewModel(Map<String, dynamic> note) {
+    // Parse transcription to extract original and translated text
+    final transcription = note['transcription'] as String?;
+    String originalTranscript = '';
+    String? translatedTranscript;
+    String languageLabel = 'EN';
+
+    if (transcription != null && transcription.isNotEmpty) {
+      // Check if transcription has language marker format: [Language] text
+      final languagePattern = RegExp(r'\[(.*?)\]\s*(.*?)(?:\n\n\[English\]\s*(.*))?$', dotAll: true);
+      final match = languagePattern.firstMatch(transcription);
+
+      if (match != null) {
+        languageLabel = match.group(1) ?? 'EN';
+        originalTranscript = (match.group(2) ?? '').trim();
+        translatedTranscript = (match.group(3) ?? '').trim();
+        
+        // If no translation but language is English, use original as both
+        if (translatedTranscript?.isEmpty ?? true) {
+          if (languageLabel.toLowerCase() == 'english') {
+            translatedTranscript = null; // No need for translation
+          }
+        }
+      } else {
+        // No language marker, assume English
+        originalTranscript = transcription;
+        languageLabel = 'EN';
+      }
+    }
+
     return VoiceNoteCardViewModel(
-      id: note['id']?.toString() ?? '',
-      originalTranscript: note['transcript']?.toString() ?? '',
-      originalLanguageLabel: note['language']?.toString() ?? 'EN',
-      audioUrl: note['audio_url']?.toString() ?? '',
-      translatedTranscript: note['translated_transcript']?.toString(),
-      isEditable: false,
-      isProcessing: note['status']?.toString() == 'processing',
+      id: note['id'] ?? '',
+      originalTranscript: originalTranscript,
+      originalLanguageLabel: languageLabel,
+      audioUrl: note['audio_url'] ?? '',
+      translatedTranscript: translatedTranscript,
+      isEditable: !(note['is_edited'] ?? false), // Not editable if already edited
+      isProcessing: note['status'] == 'processing',
     );
   }
 
   @override
   Widget build(BuildContext context) {
     if (_isInitializing || _accountId == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: Color(0xFF1A237E))),
+      return Scaffold(
+        backgroundColor: const Color(0xFFF4F4F4),
+        appBar: AppBar(
+          title: const Text('SITE LOGS'),
+          backgroundColor: const Color(0xFF1A237E),
+          foregroundColor: Colors.white,
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: Color(0xFF1A237E)),
+        ),
       );
     }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F4F4),
       appBar: AppBar(
-        title: const Text('SITE LOGS', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+        title: const Text('SITE LOGS'),
         backgroundColor: const Color(0xFF1A237E),
         foregroundColor: Colors.white,
-        centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout_rounded),
-            onPressed: () => _supabase.auth.signOut(),
+            icon: const Icon(Icons.logout),
+            onPressed: _handleLogout,
           )
         ],
       ),
@@ -124,12 +189,15 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
         children: [
           _buildHeroSection(),
           const Padding(
-            padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
+            padding: EdgeInsets.symmetric(horizontal: 20.0, vertical: 10),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 "COMPANY FEED",
-                style: TextStyle(fontWeight: FontWeight.w900, color: Colors.grey, fontSize: 12, letterSpacing: 0.5),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
               ),
             ),
           ),
@@ -173,16 +241,62 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
           .eq('account_id', _accountId!)
           .order('created_at', ascending: false),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                const SizedBox(height: 16),
+                Text('Error: ${snapshot.error}'),
+              ],
+            ),
+          );
+        }
+
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.mic_none, size: 64, color: Colors.grey),
+                SizedBox(height: 16),
+                Text(
+                  "No voice notes yet",
+                  style: TextStyle(color: Colors.grey),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  "Tap the mic button above to create your first note",
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          );
+        }
+
         final notes = snapshot.data!;
         return ListView.builder(
           padding: const EdgeInsets.only(bottom: 20),
           itemCount: notes.length,
-          itemBuilder: (context, i) => VoiceNoteCard(
-            viewModel: _createViewModel(notes[i]),
-            isReplying: false,
-            onReply: () {}, // No reply functionality in construction home screen
-          ),
+          itemBuilder: (context, i) {
+            return VoiceNoteCard(
+              viewModel: _createViewModel(notes[i]),
+              isReplying: false,
+              onReply: () {
+                // Worker screen doesn't support replies yet
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Reply feature coming soon!'),
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );

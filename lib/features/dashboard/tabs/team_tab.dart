@@ -4,6 +4,7 @@ import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/team_card_widget.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/team_dialogs.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/role_management_dialog.dart';
 
 class TeamTab extends StatefulWidget {
   final String? accountId;
@@ -49,6 +50,15 @@ class _TeamTabState extends State<TeamTab> {
     );
   }
 
+  Future<void> _handleManageRoles() async {
+    await showDialog(
+      context: context,
+      builder: (context) => RoleManagementDialog(
+        accountId: widget.accountId ?? '',
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.accountId == null || widget.accountId!.isEmpty) {
@@ -59,10 +69,25 @@ class _TeamTabState extends State<TeamTab> {
       children: [
         SectionHeader(
           title: "Team Management",
-          trailing: ActionButton(
-            label: "Invite User",
-            icon: Icons.person_add,
-            onPressed: _handleInviteStaff,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton.icon(
+                icon: const Icon(Icons.badge, size: 18),
+                label: const Text("Manage Roles"),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.primaryIndigo,
+                ),
+                onPressed: _handleManageRoles,
+              ),
+              const SizedBox(width: AppTheme.spacingS),
+              ActionButton(
+                label: "Invite User",
+                icon: Icons.person_add,
+                onPressed: _handleInviteStaff,
+                isCompact: true,
+              ),
+            ],
           ),
         ),
         Expanded(
