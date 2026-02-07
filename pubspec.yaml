@@ -25,9 +25,11 @@ dependencies:
   web: ^0.4.0
 
   # For relative timestamps
-  timeago: ^3.2.2  
+  timeago: ^3.2.2
+  # Icons
+  lucide_icons: ^0.257.0
   # For persisting layout preference
-  shared_preferences: ^2.2.2  
+  shared_preferences: ^2.2.2
 dev_dependencies:
   flutter_test:
     sdk: flutter
