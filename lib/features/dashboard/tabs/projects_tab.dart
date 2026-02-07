@@ -34,13 +34,22 @@ class _ProjectsTabState extends State<ProjectsTab> {
 
     try {
       // 1. Insert the project
+      final insertData = <String, dynamic>{
+        'name': result['name'],
+        'location': result['location'],
+        'account_id': widget.accountId,
+      };
+
+      // Geofence coordinates
+      if (result['siteLat'] != null && result['siteLng'] != null) {
+        insertData['site_latitude'] = double.parse(result['siteLat']!);
+        insertData['site_longitude'] = double.parse(result['siteLng']!);
+        insertData['geofence_radius_m'] = int.parse(result['geofenceRadius'] ?? '200');
+      }
+
       final projectResponse = await _supabase
           .from('projects')
-          .insert({
-            'name': result['name'],
-            'location': result['location'],
-            'account_id': widget.accountId,
-          })
+          .insert(insertData)
           .select('id')
           .single();
 
@@ -149,10 +158,23 @@ class _ProjectsTabState extends State<ProjectsTab> {
   Future<void> _handleEditProject(Map<String, dynamic> project) async {
     final result = await ProjectDialogs.showEditProjectDialog(context, project);
     if (result != null) {
-      await _supabase.from('projects').update({
+      final updateData = <String, dynamic>{
         'name': result['name'],
         'location': result['location'],
-      }).eq('id', project['id']);
+      };
+
+      // Geofence coordinates
+      if (result['siteLat'] != null && result['siteLng'] != null) {
+        updateData['site_latitude'] = double.parse(result['siteLat']!);
+        updateData['site_longitude'] = double.parse(result['siteLng']!);
+        updateData['geofence_radius_m'] = int.parse(result['geofenceRadius'] ?? '200');
+      } else if (result['clearGeofence'] == 'true') {
+        updateData['site_latitude'] = null;
+        updateData['site_longitude'] = null;
+        updateData['geofence_radius_m'] = 200;
+      }
+
+      await _supabase.from('projects').update(updateData).eq('id', project['id']);
     }
   }
 

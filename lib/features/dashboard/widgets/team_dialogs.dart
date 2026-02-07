@@ -235,6 +235,7 @@ class TeamDialogs {
   ) async {
     final supabase = Supabase.instance.client;
     String? selectedProject = user['current_project_id'];
+    bool geofenceExempt = user['geofence_exempt'] == true;
     bool isLoading = false;
 
     try {
@@ -341,7 +342,29 @@ class TeamDialogs {
                     ],
                     onChanged: isLoading ? null : (v) => setState(() => selectedProject = v),
                   ),
-                  
+
+                  const SizedBox(height: AppTheme.spacingL),
+                  const Divider(),
+                  const SizedBox(height: AppTheme.spacingS),
+
+                  // Geofence exemption
+                  Text("Geofence Settings", style: AppTheme.headingSmall),
+                  const SizedBox(height: AppTheme.spacingS),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text("Exempt from Geofence",
+                      style: TextStyle(fontSize: 14)),
+                    subtitle: const Text(
+                      "Allow this worker to check in from any location",
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    value: geofenceExempt,
+                    activeColor: AppTheme.primaryIndigo,
+                    onChanged: isLoading
+                        ? null
+                        : (v) => setState(() => geofenceExempt = v),
+                  ),
+
                   // Loading indicator
                   if (isLoading) ...[
                     const SizedBox(height: AppTheme.spacingL),
@@ -371,6 +394,7 @@ class TeamDialogs {
                         try {
                           await supabase.from('users').update({
                             'current_project_id': selectedProject,
+                            'geofence_exempt': geofenceExempt,
                           }).eq('id', user['id']);
 
                           if (context.mounted) {

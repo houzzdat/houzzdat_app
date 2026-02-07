@@ -74,6 +74,14 @@ class TeamCardWidget extends StatelessWidget {
                 icon: Icons.check_circle,
               ),
             ],
+            if (user['geofence_exempt'] == true) ...[
+              const SizedBox(width: AppTheme.spacingS),
+              CategoryBadge(
+                text: 'No Geofence',
+                color: AppTheme.warningOrange,
+                icon: Icons.location_off,
+              ),
+            ],
           ],
         ),
         trailing: IconButton(
