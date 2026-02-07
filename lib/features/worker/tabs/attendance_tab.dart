@@ -3,12 +3,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
+import 'package:houzzdat_app/core/services/geofence_service.dart';
 
 enum AttendanceStatus { checkedOut, checkedIn }
 enum ReportType { voice, text }
 
 /// Attendance tab — check-in, daily report (checkout), and history.
-/// All data persisted to the Supabase `attendance` table.
+/// Uses real GPS geofencing against the project's site coordinates.
 class AttendanceTab extends StatefulWidget {
   final String accountId;
   final String userId;
@@ -28,6 +29,7 @@ class AttendanceTab extends StatefulWidget {
 class _AttendanceTabState extends State<AttendanceTab> {
   final _supabase = Supabase.instance.client;
   final _recorderService = AudioRecorderService();
+  final _geofenceService = GeofenceService();
 
   AttendanceStatus _status = AttendanceStatus.checkedOut;
   String? _activeAttendanceId;
@@ -35,17 +37,77 @@ class _AttendanceTabState extends State<AttendanceTab> {
   List<Map<String, dynamic>> _history = [];
   bool _isLoading = true;
 
-  // Mock geofence
-  bool _isInsideSite = true;
+  // Geofence state
+  GeofenceResult? _geofenceResult;
+  bool _isCheckingLocation = false;
+  bool _isGeofenceExempt = false;
+
+  // Project geofence config (fetched from DB)
+  double? _siteLat;
+  double? _siteLng;
+  int _geofenceRadius = 200;
+  bool _hasGeofenceConfig = false;
+  String? _projectName;
 
   @override
   void initState() {
     super.initState();
-    _loadAttendance();
+    _loadAll();
+  }
+
+  Future<void> _loadAll() async {
+    setState(() => _isLoading = true);
+    await Future.wait([
+      _loadGeofenceConfig(),
+      _loadAttendance(),
+    ]);
+    if (mounted) setState(() => _isLoading = false);
+    // After config is loaded, auto-check location
+    if (_hasGeofenceConfig && !_isGeofenceExempt) {
+      _checkLocation();
+    }
+  }
+
+  /// Fetch the project's geofence config and user's exempt flag.
+  Future<void> _loadGeofenceConfig() async {
+    try {
+      // Fetch user's geofence_exempt flag
+      final userRow = await _supabase
+          .from('users')
+          .select('geofence_exempt')
+          .eq('id', widget.userId)
+          .maybeSingle();
+
+      if (userRow != null) {
+        _isGeofenceExempt = userRow['geofence_exempt'] == true;
+      }
+
+      // Fetch project geofence coordinates
+      if (widget.projectId != null) {
+        final project = await _supabase
+            .from('projects')
+            .select('name, site_latitude, site_longitude, geofence_radius_m')
+            .eq('id', widget.projectId!)
+            .maybeSingle();
+
+        if (project != null) {
+          _projectName = project['name'];
+          final lat = project['site_latitude'];
+          final lng = project['site_longitude'];
+          if (lat != null && lng != null) {
+            _siteLat = (lat as num).toDouble();
+            _siteLng = (lng as num).toDouble();
+            _geofenceRadius = (project['geofence_radius_m'] as int?) ?? 200;
+            _hasGeofenceConfig = true;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading geofence config: $e');
+    }
   }
 
   Future<void> _loadAttendance() async {
-    setState(() => _isLoading = true);
     try {
       // Check for an open session (checked in but not out)
       final openSession = await _supabase
@@ -81,23 +143,68 @@ class _AttendanceTabState extends State<AttendanceTab> {
           _history = (historyData as List)
               .map((e) => Map<String, dynamic>.from(e))
               .toList();
-          _isLoading = false;
         });
       }
     } catch (e) {
       debugPrint('Error loading attendance: $e');
-      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// Check current GPS position against the project geofence.
+  Future<void> _checkLocation() async {
+    if (!_hasGeofenceConfig) return;
+    setState(() => _isCheckingLocation = true);
+
+    final result = await _geofenceService.checkPosition(
+      siteLat: _siteLat!,
+      siteLng: _siteLng!,
+      radiusM: _geofenceRadius,
+    );
+
+    if (mounted) {
+      setState(() {
+        _geofenceResult = result;
+        _isCheckingLocation = false;
+      });
+    }
+  }
+
+  /// Whether the check-in button should be enabled.
+  bool get _canCheckIn {
+    // Already checked in → no
+    if (_status == AttendanceStatus.checkedIn) return false;
+    // Exempt users can always check in
+    if (_isGeofenceExempt) return true;
+    // No geofence configured → allow check-in
+    if (!_hasGeofenceConfig) return true;
+    // Must be inside geofence
+    return _geofenceResult?.status == GeofenceStatus.inside;
   }
 
   Future<void> _handleCheckIn() async {
     try {
-      final result = await _supabase.from('attendance').insert({
+      final insertData = <String, dynamic>{
         'user_id': widget.userId,
         'account_id': widget.accountId,
         'project_id': widget.projectId,
         'check_in_at': DateTime.now().toIso8601String(),
-      }).select().single();
+      };
+
+      // Attach GPS coordinates if available
+      if (_geofenceResult != null &&
+          _geofenceResult!.latitude != null &&
+          _geofenceResult!.longitude != null) {
+        insertData['check_in_lat'] = _geofenceResult!.latitude;
+        insertData['check_in_lng'] = _geofenceResult!.longitude;
+        insertData['check_in_distance_m'] = _geofenceResult!.distanceMetres;
+      }
+
+      // Flag if user is exempt (checking in without geofence validation)
+      if (_isGeofenceExempt && _hasGeofenceConfig) {
+        insertData['geofence_overridden'] = true;
+      }
+
+      final result = await _supabase.from('attendance').insert(insertData).select().single();
 
       if (mounted) {
         setState(() {
@@ -177,6 +284,8 @@ class _AttendanceTabState extends State<AttendanceTab> {
     return '${h}h ${m}m on site';
   }
 
+  // ────────────────────── BUILD ──────────────────────
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -186,13 +295,13 @@ class _AttendanceTabState extends State<AttendanceTab> {
     }
 
     return RefreshIndicator(
-      onRefresh: _loadAttendance,
+      onRefresh: _loadAll,
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           _buildStatusCard(),
-          const SizedBox(height: 24),
-          _buildGeofenceToggle(),
+          const SizedBox(height: 16),
+          _buildLocationStatusCard(),
           const SizedBox(height: 24),
           if (_history.isNotEmpty) ...[
             Text('HISTORY',
@@ -209,6 +318,8 @@ class _AttendanceTabState extends State<AttendanceTab> {
       ),
     );
   }
+
+  // ────────────────────── STATUS CARD ──────────────────────
 
   Widget _buildStatusCard() {
     return Card(
@@ -264,20 +375,13 @@ class _AttendanceTabState extends State<AttendanceTab> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
                   ),
-                  onPressed: _isInsideSite ? _handleCheckIn : null,
+                  onPressed: _canCheckIn ? _handleCheckIn : null,
                 ),
               ),
-              if (!_isInsideSite) ...[
+              // Show why check-in is blocked
+              if (!_canCheckIn && _geofenceResult != null) ...[
                 const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(LucideIcons.mapPinOff, size: 14, color: Colors.red.shade400),
-                    const SizedBox(width: 6),
-                    Text('Not on Site — move to the job site to check in',
-                      style: TextStyle(fontSize: 12, color: Colors.red.shade400)),
-                  ],
-                ),
+                _buildBlockedMessage(),
               ],
             ] else ...[
               SizedBox(
@@ -304,31 +408,233 @@ class _AttendanceTabState extends State<AttendanceTab> {
     );
   }
 
-  Widget _buildGeofenceToggle() {
+  /// Message shown when check-in is blocked due to geofence.
+  Widget _buildBlockedMessage() {
+    final result = _geofenceResult!;
+    final distLabel = result.distanceMetres != null
+        ? (result.distanceMetres! >= 1000
+            ? '${(result.distanceMetres! / 1000).toStringAsFixed(1)}km'
+            : '${result.distanceMetres!.round()}m')
+        : '';
+
+    String text;
+    switch (result.status) {
+      case GeofenceStatus.outside:
+        text = 'You are $distLabel from ${_projectName ?? 'the site'}. Move within ${_geofenceRadius}m to check in.';
+        break;
+      case GeofenceStatus.permissionDenied:
+        text = result.message;
+        break;
+      case GeofenceStatus.serviceDisabled:
+        text = result.message;
+        break;
+      default:
+        text = result.message;
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(LucideIcons.mapPinOff, size: 14, color: Colors.red.shade400),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(text,
+            style: TextStyle(fontSize: 12, color: Colors.red.shade400)),
+        ),
+      ],
+    );
+  }
+
+  // ────────────────────── LOCATION STATUS CARD ──────────────────────
+
+  Widget _buildLocationStatusCard() {
+    // No geofence configured for this project
+    if (!_hasGeofenceConfig) {
+      if (_isGeofenceExempt) {
+        return _locationCard(
+          icon: LucideIcons.shieldOff,
+          iconColor: Colors.amber.shade700,
+          bgColor: Colors.amber.shade50,
+          title: 'Geofence Exempt',
+          subtitle: 'You can check in from any location',
+        );
+      }
+      return _locationCard(
+        icon: LucideIcons.mapPin,
+        iconColor: Colors.grey.shade500,
+        bgColor: Colors.grey.shade50,
+        title: 'No Site Boundary Set',
+        subtitle: 'Location verification not required for this project',
+      );
+    }
+
+    // Exempt user
+    if (_isGeofenceExempt) {
+      return _locationCard(
+        icon: LucideIcons.shieldOff,
+        iconColor: Colors.amber.shade700,
+        bgColor: Colors.amber.shade50,
+        title: 'Geofence Exempt',
+        subtitle: 'You can check in from any location',
+      );
+    }
+
+    // Currently detecting
+    if (_isCheckingLocation) {
+      return _locationCard(
+        icon: LucideIcons.loader,
+        iconColor: Colors.grey.shade600,
+        bgColor: Colors.grey.shade50,
+        title: 'Locating you...',
+        subtitle: 'Acquiring GPS signal',
+        trailing: const SizedBox(
+          width: 18, height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF1A237E)),
+        ),
+      );
+    }
+
+    // No result yet
+    if (_geofenceResult == null) {
+      return _locationCard(
+        icon: LucideIcons.mapPin,
+        iconColor: Colors.grey.shade500,
+        bgColor: Colors.grey.shade50,
+        title: 'Location Not Checked',
+        subtitle: 'Tap to verify your location',
+        onTap: _checkLocation,
+      );
+    }
+
+    // Result available
+    final r = _geofenceResult!;
+
+    switch (r.status) {
+      case GeofenceStatus.inside:
+        return _locationCard(
+          icon: LucideIcons.mapPin,
+          iconColor: Colors.green,
+          bgColor: Colors.green.shade50,
+          title: r.message,
+          subtitle: '${_projectName ?? 'Site'} — ${_geofenceRadius}m radius',
+          trailing: IconButton(
+            icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade400),
+            onPressed: _checkLocation,
+          ),
+        );
+
+      case GeofenceStatus.outside:
+        return _locationCard(
+          icon: LucideIcons.mapPinOff,
+          iconColor: Colors.red,
+          bgColor: Colors.red.shade50,
+          title: r.message,
+          subtitle: 'Move within ${_geofenceRadius}m of ${_projectName ?? 'the site'}',
+          trailing: IconButton(
+            icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade400),
+            onPressed: _checkLocation,
+          ),
+        );
+
+      case GeofenceStatus.permissionDenied:
+        return _locationCard(
+          icon: LucideIcons.shieldAlert,
+          iconColor: Colors.amber.shade700,
+          bgColor: Colors.amber.shade50,
+          title: 'Location Permission Required',
+          subtitle: r.message,
+          trailing: TextButton(
+            onPressed: () => _geofenceService.openSettings(),
+            child: const Text('SETTINGS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+        );
+
+      case GeofenceStatus.serviceDisabled:
+        return _locationCard(
+          icon: LucideIcons.wifiOff,
+          iconColor: Colors.grey.shade600,
+          bgColor: Colors.grey.shade100,
+          title: 'GPS Disabled',
+          subtitle: r.message,
+          trailing: TextButton(
+            onPressed: () => _geofenceService.openLocationSettings(),
+            child: const Text('ENABLE', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+        );
+
+      case GeofenceStatus.error:
+        return _locationCard(
+          icon: LucideIcons.alertTriangle,
+          iconColor: Colors.orange,
+          bgColor: Colors.orange.shade50,
+          title: 'Location Error',
+          subtitle: r.message,
+          trailing: IconButton(
+            icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade400),
+            onPressed: _checkLocation,
+          ),
+        );
+
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  /// Reusable location status card.
+  Widget _locationCard({
+    required IconData icon,
+    required Color iconColor,
+    required Color bgColor,
+    required String title,
+    required String subtitle,
+    Widget? trailing,
+    VoidCallback? onTap,
+  }) {
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: SwitchListTile(
-        secondary: Icon(
-          _isInsideSite ? LucideIcons.mapPin : LucideIcons.mapPinOff,
-          color: _isInsideSite ? Colors.green : Colors.red,
+      color: bgColor,
+      elevation: 0,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(icon, color: iconColor, size: 24),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: iconColor,
+                      )),
+                    const SizedBox(height: 2),
+                    Text(subtitle,
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                  ],
+                ),
+              ),
+              if (trailing != null) trailing,
+            ],
+          ),
         ),
-        title: Text(
-          _isInsideSite ? 'On Site (Mock)' : 'Off Site (Mock)',
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-        ),
-        subtitle: const Text('Toggle to simulate geofence', style: TextStyle(fontSize: 11)),
-        value: _isInsideSite,
-        activeColor: Colors.green,
-        onChanged: (val) => setState(() => _isInsideSite = val),
       ),
     );
   }
+
+  // ────────────────────── HISTORY CARD ──────────────────────
 
   Widget _buildHistoryCard(Map<String, dynamic> entry) {
     final checkIn = DateTime.parse(entry['check_in_at']);
     final checkOut = DateTime.parse(entry['check_out_at']);
     final reportType = entry['report_type'];
     final isVoice = reportType == 'voice';
+    final overridden = entry['geofence_overridden'] == true;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -371,6 +677,18 @@ class _AttendanceTabState extends State<AttendanceTab> {
                 ],
               ),
             ),
+            // Location badge
+            if (overridden)
+              Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade100,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text('Exempt',
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.amber.shade800)),
+              ),
             Text(
               isVoice ? 'Voice' : 'Text',
               style: TextStyle(
@@ -386,7 +704,10 @@ class _AttendanceTabState extends State<AttendanceTab> {
   }
 }
 
-/// Bottom sheet for sending a daily report — voice or text.
+// ══════════════════════════════════════════════════════════════
+// Daily Report Bottom Sheet (unchanged)
+// ══════════════════════════════════════════════════════════════
+
 class _DailyReportSheet extends StatefulWidget {
   final AudioRecorderService recorderService;
   final String accountId;

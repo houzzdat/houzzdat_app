@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 
 class ProjectDialogs {
   /// Create project dialog with optional owner onboarding
-  /// Returns: { name, location, ownerEmail?, ownerPhone?, ownerName?, ownerPassword? }
+  /// Returns: { name, location, ownerEmail?, ownerPhone?, ownerName?, ownerPassword?,
+  ///            siteLat?, siteLng?, geofenceRadius? }
   static Future<Map<String, String>?> showAddProjectDialog(BuildContext context) async {
     final nameController = TextEditingController();
     final locationController = TextEditingController();
@@ -15,6 +17,14 @@ class ProjectDialogs {
     bool showOwnerSection = false;
     bool ownerExists = false;
     String? existingOwnerId;
+
+    // Geofence
+    bool geofenceEnabled = false;
+    double? siteLat;
+    double? siteLng;
+    double geofenceRadius = 200;
+    bool isFetchingLocation = false;
+    String? locationError;
 
     final supabase = Supabase.instance.client;
 
@@ -91,6 +101,156 @@ class ProjectDialogs {
                   ),
 
                   const SizedBox(height: AppTheme.spacingL),
+                  const Divider(),
+
+                  // Geofence section
+                  InkWell(
+                    onTap: () => setState(() => geofenceEnabled = !geofenceEnabled),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: AppTheme.spacingS),
+                      child: Row(
+                        children: [
+                          Icon(
+                            geofenceEnabled ? Icons.expand_less : Icons.expand_more,
+                            color: AppTheme.primaryIndigo,
+                          ),
+                          const SizedBox(width: AppTheme.spacingS),
+                          Text(
+                            "Site Geofence",
+                            style: AppTheme.headingSmall.copyWith(
+                              color: AppTheme.primaryIndigo,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            geofenceEnabled ? "" : "(Optional)",
+                            style: AppTheme.caption,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  if (geofenceEnabled) ...[
+                    const SizedBox(height: AppTheme.spacingS),
+                    Text(
+                      "Set the site boundary for attendance check-in. Workers must be within the radius to mark attendance.",
+                      style: AppTheme.bodySmall,
+                    ),
+                    const SizedBox(height: AppTheme.spacingM),
+
+                    // Use Current Location button
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        icon: isFetchingLocation
+                            ? const SizedBox(
+                                width: 16, height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2))
+                            : Icon(
+                                siteLat != null ? Icons.check_circle : Icons.my_location,
+                                size: 18,
+                              ),
+                        label: Text(
+                          isFetchingLocation
+                              ? 'Getting location...'
+                              : siteLat != null
+                                  ? 'Location set (${siteLat!.toStringAsFixed(5)}, ${siteLng!.toStringAsFixed(5)})'
+                                  : 'Use Current Location',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: siteLat != null
+                              ? AppTheme.successGreen
+                              : AppTheme.primaryIndigo,
+                          side: BorderSide(
+                            color: siteLat != null
+                                ? AppTheme.successGreen
+                                : AppTheme.primaryIndigo,
+                          ),
+                        ),
+                        onPressed: isFetchingLocation
+                            ? null
+                            : () async {
+                                setState(() {
+                                  isFetchingLocation = true;
+                                  locationError = null;
+                                });
+
+                                try {
+                                  bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+                                  if (!serviceEnabled) {
+                                    setState(() {
+                                      locationError = 'Location services are disabled.';
+                                      isFetchingLocation = false;
+                                    });
+                                    return;
+                                  }
+
+                                  LocationPermission permission = await Geolocator.checkPermission();
+                                  if (permission == LocationPermission.denied) {
+                                    permission = await Geolocator.requestPermission();
+                                  }
+                                  if (permission == LocationPermission.denied ||
+                                      permission == LocationPermission.deniedForever) {
+                                    setState(() {
+                                      locationError = 'Location permission denied.';
+                                      isFetchingLocation = false;
+                                    });
+                                    return;
+                                  }
+
+                                  final position = await Geolocator.getCurrentPosition(
+                                    locationSettings: const LocationSettings(
+                                      accuracy: LocationAccuracy.high,
+                                      timeLimit: Duration(seconds: 15),
+                                    ),
+                                  );
+
+                                  setState(() {
+                                    siteLat = position.latitude;
+                                    siteLng = position.longitude;
+                                    isFetchingLocation = false;
+                                  });
+                                } catch (e) {
+                                  setState(() {
+                                    locationError = 'Failed to get location.';
+                                    isFetchingLocation = false;
+                                  });
+                                }
+                              },
+                      ),
+                    ),
+
+                    if (locationError != null) ...[
+                      const SizedBox(height: AppTheme.spacingS),
+                      Text(locationError!,
+                        style: TextStyle(fontSize: 12, color: AppTheme.errorRed)),
+                    ],
+
+                    const SizedBox(height: AppTheme.spacingM),
+
+                    // Radius slider
+                    Row(
+                      children: [
+                        const Text('Radius: ', style: TextStyle(fontSize: 13)),
+                        Expanded(
+                          child: Slider(
+                            value: geofenceRadius,
+                            min: 50,
+                            max: 500,
+                            divisions: 18,
+                            label: '${geofenceRadius.round()}m',
+                            activeColor: AppTheme.primaryIndigo,
+                            onChanged: (v) => setState(() => geofenceRadius = v),
+                          ),
+                        ),
+                        Text('${geofenceRadius.round()}m',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ],
+
+                  const SizedBox(height: AppTheme.spacingS),
                   const Divider(),
 
                   // Owner section toggle
@@ -240,6 +400,13 @@ class ProjectDialogs {
                       'location': locationController.text.trim(),
                     };
 
+                    // Geofence data
+                    if (geofenceEnabled && siteLat != null && siteLng != null) {
+                      result['siteLat'] = siteLat.toString();
+                      result['siteLng'] = siteLng.toString();
+                      result['geofenceRadius'] = geofenceRadius.round().toString();
+                    }
+
                     if (showOwnerSection) {
                       final ownerEmail = ownerEmailController.text.trim();
                       final ownerPhone = ownerPhoneController.text.trim();
@@ -275,39 +442,196 @@ class ProjectDialogs {
     final nameController = TextEditingController(text: project['name']);
     final locationController = TextEditingController(text: project['location'] ?? '');
 
+    // Geofence — pre-fill from existing project data
+    double? siteLat = project['site_latitude'] != null
+        ? (project['site_latitude'] as num).toDouble()
+        : null;
+    double? siteLng = project['site_longitude'] != null
+        ? (project['site_longitude'] as num).toDouble()
+        : null;
+    double geofenceRadius =
+        ((project['geofence_radius_m'] as int?) ?? 200).toDouble();
+    bool geofenceEnabled = siteLat != null && siteLng != null;
+    bool isFetchingLocation = false;
+    String? locationError;
+
     return showDialog<Map<String, String>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Edit Site"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: "Site Name"),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text("Edit Site"),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(labelText: "Site Name"),
+                ),
+                const SizedBox(height: AppTheme.spacingM),
+                TextField(
+                  controller: locationController,
+                  decoration: const InputDecoration(labelText: "Location"),
+                ),
+
+                const SizedBox(height: AppTheme.spacingL),
+                const Divider(),
+
+                // Geofence toggle
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text("Site Geofence",
+                    style: AppTheme.headingSmall.copyWith(color: AppTheme.primaryIndigo)),
+                  subtitle: const Text("Require workers to be on-site to check in",
+                    style: TextStyle(fontSize: 12)),
+                  value: geofenceEnabled,
+                  activeColor: AppTheme.primaryIndigo,
+                  onChanged: (v) => setState(() => geofenceEnabled = v),
+                ),
+
+                if (geofenceEnabled) ...[
+                  const SizedBox(height: AppTheme.spacingS),
+
+                  // Use Current Location button
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      icon: isFetchingLocation
+                          ? const SizedBox(
+                              width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : Icon(
+                              siteLat != null ? Icons.check_circle : Icons.my_location,
+                              size: 18,
+                            ),
+                      label: Text(
+                        isFetchingLocation
+                            ? 'Getting location...'
+                            : siteLat != null
+                                ? 'Location set (${siteLat!.toStringAsFixed(5)}, ${siteLng!.toStringAsFixed(5)})'
+                                : 'Use Current Location',
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: siteLat != null
+                            ? AppTheme.successGreen
+                            : AppTheme.primaryIndigo,
+                        side: BorderSide(
+                          color: siteLat != null
+                              ? AppTheme.successGreen
+                              : AppTheme.primaryIndigo,
+                        ),
+                      ),
+                      onPressed: isFetchingLocation
+                          ? null
+                          : () async {
+                              setState(() {
+                                isFetchingLocation = true;
+                                locationError = null;
+                              });
+
+                              try {
+                                bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+                                if (!serviceEnabled) {
+                                  setState(() {
+                                    locationError = 'Location services are disabled.';
+                                    isFetchingLocation = false;
+                                  });
+                                  return;
+                                }
+
+                                LocationPermission permission = await Geolocator.checkPermission();
+                                if (permission == LocationPermission.denied) {
+                                  permission = await Geolocator.requestPermission();
+                                }
+                                if (permission == LocationPermission.denied ||
+                                    permission == LocationPermission.deniedForever) {
+                                  setState(() {
+                                    locationError = 'Location permission denied.';
+                                    isFetchingLocation = false;
+                                  });
+                                  return;
+                                }
+
+                                final position = await Geolocator.getCurrentPosition(
+                                  locationSettings: const LocationSettings(
+                                    accuracy: LocationAccuracy.high,
+                                    timeLimit: Duration(seconds: 15),
+                                  ),
+                                );
+
+                                setState(() {
+                                  siteLat = position.latitude;
+                                  siteLng = position.longitude;
+                                  isFetchingLocation = false;
+                                });
+                              } catch (e) {
+                                setState(() {
+                                  locationError = 'Failed to get location.';
+                                  isFetchingLocation = false;
+                                });
+                              }
+                            },
+                    ),
+                  ),
+
+                  if (locationError != null) ...[
+                    const SizedBox(height: AppTheme.spacingS),
+                    Text(locationError!,
+                      style: TextStyle(fontSize: 12, color: AppTheme.errorRed)),
+                  ],
+
+                  const SizedBox(height: AppTheme.spacingM),
+
+                  // Radius slider
+                  Row(
+                    children: [
+                      const Text('Radius: ', style: TextStyle(fontSize: 13)),
+                      Expanded(
+                        child: Slider(
+                          value: geofenceRadius,
+                          min: 50,
+                          max: 500,
+                          divisions: 18,
+                          label: '${geofenceRadius.round()}m',
+                          activeColor: AppTheme.primaryIndigo,
+                          onChanged: (v) => setState(() => geofenceRadius = v),
+                        ),
+                      ),
+                      Text('${geofenceRadius.round()}m',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: AppTheme.spacingM),
-            TextField(
-              controller: locationController,
-              decoration: const InputDecoration(labelText: "Location"),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final result = {
+                  'name': nameController.text.trim(),
+                  'location': locationController.text.trim(),
+                };
+
+                if (geofenceEnabled && siteLat != null && siteLng != null) {
+                  result['siteLat'] = siteLat.toString();
+                  result['siteLng'] = siteLng.toString();
+                  result['geofenceRadius'] = geofenceRadius.round().toString();
+                } else {
+                  // Explicitly clear geofence if disabled
+                  result['clearGeofence'] = 'true';
+                }
+
+                Navigator.pop(context, result);
+              },
+              child: const Text("Save"),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context, {
-                'name': nameController.text.trim(),
-                'location': locationController.text.trim(),
-              });
-            },
-            child: const Text("Save"),
-          ),
-        ],
       ),
     );
   }

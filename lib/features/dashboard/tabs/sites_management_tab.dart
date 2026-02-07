@@ -27,11 +27,20 @@ class _SitesManagementTabState extends State<SitesManagementTab> {
   Future<void> _handleAddSite() async {
     final result = await ProjectDialogs.showAddProjectDialog(context);
     if (result != null) {
-      await _supabase.from('projects').insert({
+      final insertData = <String, dynamic>{
         'name': result['name'],
         'location': result['location'],
         'account_id': widget.accountId,
-      });
+      };
+
+      // Geofence coordinates
+      if (result['siteLat'] != null && result['siteLng'] != null) {
+        insertData['site_latitude'] = double.parse(result['siteLat']!);
+        insertData['site_longitude'] = double.parse(result['siteLng']!);
+        insertData['geofence_radius_m'] = int.parse(result['geofenceRadius'] ?? '200');
+      }
+
+      await _supabase.from('projects').insert(insertData);
     }
   }
 
