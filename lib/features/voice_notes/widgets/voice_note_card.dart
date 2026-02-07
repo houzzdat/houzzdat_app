@@ -235,7 +235,7 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
       children: [
         CircleAvatar(
           backgroundColor: isThreadedReply
-              ? AppTheme.infoBlue.withOpacity(0.2)
+              ? AppTheme.infoBlue.withValues(alpha:0.2)
               : AppTheme.primaryIndigo,
           child: Icon(
             isThreadedReply ? Icons.reply : Icons.mic,
@@ -296,7 +296,7 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
       return Container(
         padding: const EdgeInsets.all(AppTheme.spacingM),
         decoration: BoxDecoration(
-          color: AppTheme.errorRed.withOpacity(0.1),
+          color: AppTheme.errorRed.withValues(alpha:0.1),
           borderRadius: BorderRadius.circular(AppTheme.radiusM),
         ),
         child: Row(
@@ -367,7 +367,7 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: AppTheme.warningOrange.withOpacity(0.1),
+                      color: AppTheme.warningOrange.withValues(alpha:0.1),
                       borderRadius: BorderRadius.circular(AppTheme.radiusS),
                     ),
                     child: Text(

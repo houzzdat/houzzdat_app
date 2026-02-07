@@ -103,7 +103,7 @@ class _ActionsKanbanTabState extends State<ActionsKanbanTab>
             indicatorColor: Colors.white,
             indicatorWeight: 3,
             labelColor: Colors.white,
-            unselectedLabelColor: Colors.white.withOpacity(0.6),
+            unselectedLabelColor: Colors.white.withValues(alpha:0.6),
             labelStyle: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
@@ -255,7 +255,7 @@ class _ActionsKanbanTabState extends State<ActionsKanbanTab>
             Icon(
               icon,
               size: 64,
-              color: color.withOpacity(0.3),
+              color: color.withValues(alpha:0.3),
             ),
             const SizedBox(height: AppTheme.spacingM),
             Text(
@@ -263,7 +263,7 @@ class _ActionsKanbanTabState extends State<ActionsKanbanTab>
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: AppTheme.textSecondary.withOpacity(0.5),
+                color: AppTheme.textSecondary.withValues(alpha:0.5),
               ),
             ),
             const SizedBox(height: AppTheme.spacingS),
@@ -271,7 +271,7 @@ class _ActionsKanbanTabState extends State<ActionsKanbanTab>
               subtitle,
               style: TextStyle(
                 fontSize: 14,
-                color: AppTheme.textSecondary.withOpacity(0.5),
+                color: AppTheme.textSecondary.withValues(alpha:0.5),
               ),
             ),
           ],

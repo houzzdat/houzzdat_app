@@ -192,7 +192,7 @@ class _SiteCardState extends State<_SiteCard> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppTheme.radiusL),
         border: Border.all(
-          color: Colors.black.withOpacity(0.05),
+          color: Colors.black.withValues(alpha:0.05),
         ),
       ),
       child: Row(
@@ -244,7 +244,7 @@ class _SiteCardState extends State<_SiteCard> {
               vertical: AppTheme.spacingS,
             ),
             decoration: BoxDecoration(
-              color: AppTheme.primaryIndigo.withOpacity(0.1),
+              color: AppTheme.primaryIndigo.withValues(alpha:0.1),
               borderRadius: BorderRadius.circular(AppTheme.radiusM),
             ),
             child: Row(

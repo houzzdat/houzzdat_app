@@ -206,7 +206,7 @@ class _UserCardState extends State<_UserCard> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppTheme.radiusXL),
         border: Border.all(
-          color: Colors.black.withOpacity(0.05),
+          color: Colors.black.withValues(alpha:0.05),
         ),
       ),
       child: Column(

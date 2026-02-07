@@ -7,7 +7,9 @@ const corsHeaders = {
 }
 
 const LANGUAGE_NAMES: { [key: string]: string } = { 
-  'en': 'English', 'hi': 'Hindi', 'te': 'Telugu', 'ta': 'Tamil', 'kn': 'Kannada', 'mr': 'Marathi' 
+  'en': 'English', 'hi': 'Hindi', 'te': 'Telugu', 'ta': 'Tamil', 'kn': 'Kannada', 
+  'mr': 'Marathi', 'gu': 'Gujarati', 'pa': 'Punjabi', 'ml': 'Malayalam', 
+  'bn': 'Bengali', 'ur': 'Urdu'
 }
 
 /**
@@ -109,12 +111,14 @@ Deno.serve(async (req) => {
     -------------------------------------------------- */
     let transcriptRaw = voiceNote.transcript_raw_original;
     let detectedLangCode = voiceNote.detected_language_code;
+    let asrConfidence: number | undefined; // FIXED: Capture ASR confidence
 
     if (!transcriptRaw) {
       console.log("[2] Running ASR (Whisper)...");
       const asr = await performASR(providerName, apiKey, voiceNote.audio_url);
       transcriptRaw = asr.text;
       detectedLangCode = asr.language;
+      asrConfidence = asr.confidence; // FIXED: Store confidence score
 
       // Check if original is already set (race condition safety)
       const { data: currentVN } = await supabase
@@ -127,6 +131,7 @@ Deno.serve(async (req) => {
         transcript_raw_current: transcriptRaw,
         detected_language_code: detectedLangCode,
         detected_language: LANGUAGE_NAMES[detectedLangCode] || detectedLangCode,
+        asr_confidence: asrConfidence, // FIXED: Save ASR confidence
         status: 'processing'
       };
 
@@ -139,6 +144,7 @@ Deno.serve(async (req) => {
       console.log("✓ ASR completed and synced");
     } else {
       console.log("[2] ASR already completed, skipping...");
+      asrConfidence = voiceNote.asr_confidence; // Use existing confidence
     }
 
     /* --------------------------------------------------
@@ -153,7 +159,7 @@ Deno.serve(async (req) => {
         transcriptEn = transcriptRaw;
         console.log("✓ Transcript already in English");
       } else {
-        // Fetch active translation prompt
+        // Fetch active translation prompt from ai_prompts table
         const { data: transPrompt } = await supabase
           .from("ai_prompts")
           .select("*")
@@ -173,7 +179,12 @@ Deno.serve(async (req) => {
             isJson: true 
           });
           
-          transcriptEn = translationResponse.translated_text || transcriptRaw;
+          // FIXED: Extract English translation correctly
+          transcriptEn = translationResponse.translated_text 
+            || translationResponse.english_translation 
+            || translationResponse.translation
+            || transcriptRaw;
+          
           console.log("✓ Translation completed");
         } else {
           console.warn("No translation prompt found, using raw transcript");
@@ -238,124 +249,149 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
     });
 
     // CRITICAL VALIDATION: Ensure AI provided required fields
-    const finalIntent = mapAiIntent(ai.intent);
-    const finalPriority = mapAiPriority(ai.priority);
-    const finalShortSummary = ai.short_summary || "Voice note recorded";
-    const finalDetailedSummary = ai.detailed_summary || ai.short_summary || "No details available";
+    if (!ai.short_summary || ai.short_summary.trim() === '') {
+      console.warn("AI did not provide short_summary, generating from transcript");
+      ai.short_summary = transcriptEn.length > 100 
+        ? transcriptEn.substring(0, 97) + '...'
+        : transcriptEn;
+    }
+
+    if (!ai.detailed_summary || ai.detailed_summary.trim() === '') {
+      console.warn("AI did not provide detailed_summary, using short_summary");
+      ai.detailed_summary = ai.short_summary;
+    }
+
+    // Validate and map intent
+    const rawIntent = ai.intent || 'information';
+    const finalIntent = mapAiIntent(rawIntent);
+    
+    // Validate and map priority
+    const rawPriority = ai.priority || 'Med';
+    const finalPriority = mapAiPriority(rawPriority);
+    
+    // Determine action category
     const actionCategory = getActionCategory(finalIntent);
 
-    console.log(`✓ AI Analysis Complete: intent=${finalIntent}, priority=${finalPriority}, confidence=${ai.confidence_score || 0.5}`);
+    console.log(`✓ AI Analysis: Intent=${finalIntent}, Priority=${finalPriority}, Category=${actionCategory || 'none'}`);
 
     /* --------------------------------------------------
-       PHASE 5: WRITE AI INTELLIGENCE TO NORMALIZED TABLES
+       PHASE 5: STRUCTURED DATA EXTRACTION
     -------------------------------------------------- */
-    console.log("[5] Writing AI outputs...");
-    
     const dbOperations: Promise<any>[] = [];
 
-    // 5.1: Write AI Analysis Summary
+    // 5.1: Store comprehensive AI analysis
     dbOperations.push(
       supabase.from("voice_note_ai_analysis").insert({
         voice_note_id: voiceNoteId,
         source_transcript: 'original',
+        edit_version: 0,
         intent: finalIntent,
         priority: finalPriority,
-        short_summary: finalShortSummary,
-        detailed_summary: finalDetailedSummary,
+        short_summary: ai.short_summary,
+        detailed_summary: ai.detailed_summary,
         confidence_score: ai.confidence_score || 0.5,
         ai_model: providerName === 'groq' ? 'llama-3.3-70b' : 'gpt-4o-mini',
-        prompt_version: `${analysisPrompt.version}`
+        prompt_version: analysisPrompt.version.toString()
       })
     );
 
-    // 5.2: Write Transactional Intelligence
-    if (ai.materials?.length > 0) {
-      dbOperations.push(
-        supabase.from("voice_note_material_requests").insert(
-          ai.materials.map((m: any) => ({
-            voice_note_id: voiceNoteId,
-            material_category: m.material_category || m.category,
-            material_name: m.material_name || m.name,
-            quantity: m.quantity,
-            unit: m.unit,
-            brand_preference: m.brand_preference,
-            delivery_date: m.delivery_date,
-            urgency: m.urgency || 'normal',
-            extracted_from: m.extracted_from || 'explicit',
-            confidence_score: m.confidence_score || ai.confidence_score || 0.5
-          }))
-        )
-      );
+    // 5.2: Extract structured entities
+    if (ai.materials && ai.materials.length > 0) {
+      const materialInserts = ai.materials.map((m: any) => ({
+        voice_note_id: voiceNoteId,
+        material_category: m.category || 'General',
+        material_name: m.name,
+        quantity: m.quantity || null,
+        unit: m.unit || null,
+        brand_preference: m.brand_preference || null,
+        delivery_date: m.delivery_date || null,
+        urgency: m.urgency || 'normal',
+        extracted_from: m.explicit ? 'explicit' : 'implicit',
+        confidence_score: m.confidence || 0.7
+      }));
+      dbOperations.push(...materialInserts.map(m => 
+        supabase.from("voice_note_material_requests").insert(m)
+      ));
     }
 
-    if (ai.labor?.length > 0) {
-      dbOperations.push(
-        supabase.from("voice_note_labor_requests").insert(
-          ai.labor.map((l: any) => ({
-            voice_note_id: voiceNoteId,
-            labor_type: l.labor_type,
-            headcount: l.headcount,
-            duration_days: l.duration_days,
-            start_date: l.start_date,
-            urgency: l.urgency || 'normal',
-            confidence_score: l.confidence_score || ai.confidence_score || 0.5
-          }))
-        )
-      );
+    if (ai.labor && ai.labor.length > 0) {
+      const laborInserts = ai.labor.map((l: any) => ({
+        voice_note_id: voiceNoteId,
+        labor_type: l.type || 'General Labor',
+        headcount: l.headcount || 1,
+        duration_days: l.duration_days || null,
+        start_date: l.start_date || null,
+        urgency: l.urgency || 'normal',
+        confidence_score: l.confidence || 0.7
+      }));
+      dbOperations.push(...laborInserts.map(l => 
+        supabase.from("voice_note_labor_requests").insert(l)
+      ));
     }
 
-    if (ai.approvals?.length > 0) {
-      dbOperations.push(
-        supabase.from("voice_note_approvals").insert(
-          ai.approvals.map((a: any) => ({
-            voice_note_id: voiceNoteId,
-            approval_type: a.approval_type,
-            amount: a.amount,
-            currency: a.currency || 'INR',
-            due_date: a.due_date,
-            requires_manager: a.requires_manager !== false, // Default true
-            confidence_score: a.confidence_score || ai.confidence_score || 0.5
-          }))
-        )
-      );
+    if (ai.approvals && ai.approvals.length > 0) {
+      const approvalInserts = ai.approvals.map((a: any) => ({
+        voice_note_id: voiceNoteId,
+        approval_type: a.type || 'General Approval',
+        amount: a.amount || null,
+        currency: a.currency || 'INR',
+        due_date: a.due_date || null,
+        requires_manager: a.requires_manager !== false,
+        confidence_score: a.confidence || 0.7
+      }));
+      dbOperations.push(...approvalInserts.map(a => 
+        supabase.from("voice_note_approvals").insert(a)
+      ));
     }
 
-    if (ai.project_events?.length > 0) {
-      dbOperations.push(
-        supabase.from("voice_note_project_events").insert(
-          ai.project_events.map((e: any) => ({
-            voice_note_id: voiceNoteId,
-            event_type: e.event_type,
-            title: e.title,
-            description: e.description,
-            requires_followup: e.requires_followup || false,
-            suggested_due_date: e.suggested_due_date,
-            confidence_score: e.confidence_score || ai.confidence_score || 0.5
-          }))
-        )
-      );
+    if (ai.project_events && ai.project_events.length > 0) {
+      const eventInserts = ai.project_events.map((e: any) => ({
+        voice_note_id: voiceNoteId,
+        event_type: e.type || 'information',
+        title: e.title || ai.short_summary,
+        description: e.description || ai.detailed_summary,
+        requires_followup: e.requires_followup || false,
+        suggested_due_date: e.suggested_due_date || null,
+        suggested_assignee: e.suggested_assignee || null,
+        confidence_score: e.confidence || 0.7
+      }));
+      dbOperations.push(...eventInserts.map(e => 
+        supabase.from("voice_note_project_events").insert(e)
+      ));
     }
 
     /* --------------------------------------------------
        PHASE 6: CREATE ACTION ITEM (IF ACTIONABLE)
     -------------------------------------------------- */
+    console.log("[6] Evaluating action item creation...");
+    
     if (actionCategory) {
-      console.log(`[6] Creating action item (category: ${actionCategory})...`);
+      const finalShortSummary = ai.short_summary || transcriptEn.substring(0, 100);
+      const finalDetailedSummary = ai.detailed_summary || transcriptEn;
 
-      const managerId = voiceNote.users?.reports_to || null;
+      // Find manager for auto-assignment
+      let managerId = null;
+      if (voiceNote.users?.reports_to) {
+        managerId = voiceNote.users.reports_to;
+      } else {
+        const { data: managers } = await supabase
+          .from("users")
+          .select("id")
+          .eq("account_id", voiceNote.account_id)
+          .in("role", ['manager', 'admin'])
+          .limit(1);
+        
+        if (managers && managers.length > 0) {
+          managerId = managers[0].id;
+        }
+      }
 
       const initialInteraction = {
         timestamp: new Date().toISOString(),
         action: 'created',
         actor_id: voiceNote.user_id,
-        actor_role: voiceNote.users?.role || 'unknown',
-        details: {
-          source: 'voice_note',
-          voice_note_id: voiceNoteId,
-          ai_intent: finalIntent,
-          ai_priority: finalPriority,
-          ai_confidence: ai.confidence_score || 0.5
-        }
+        actor_role: voiceNote.users?.role || 'worker',
+        details: 'Action item auto-created from voice note'
       };
 
       dbOperations.push(
@@ -393,29 +429,66 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
       console.log("[6] No action item needed (information category)");
     }
 
-    // CRITICAL FIX: Update voice note with ALL transcript fields for compatibility
-    const legacyTranscription = detectedLangCode === 'en' 
-      ? transcriptEn 
-      : `[${LANGUAGE_NAMES[detectedLangCode] || detectedLangCode}] ${transcriptRaw}\n\n[English] ${transcriptEn}`;
+    // 5.3: Update voice note to completed status
+    // FIXED: Build proper format for all transcript fields
+    const languageName = LANGUAGE_NAMES[detectedLangCode] || detectedLangCode.toUpperCase();
+    
+    // Build legacy 'transcription' field for compatibility
+    let legacyTranscription = '';
+    if (detectedLangCode === 'en') {
+      legacyTranscription = transcriptEn;
+    } else {
+      legacyTranscription = `[${languageName}] ${transcriptRaw}\n\n[English] ${transcriptEn}`;
+    }
+
+    // FIXED: Build translated_transcription JSONB correctly
+    // This should store English translation, not all languages
+    const translatedTranscriptions: { [key: string]: string } = {
+      'en': transcriptEn  // FIXED: English translation is stored here
+    };
+
+    // CRITICAL FIX: Check if original fields are already set to avoid modification error
+    const { data: currentVoiceNote } = await supabase
+      .from("voice_notes")
+      .select("transcript_raw_original, transcript_en_original")
+      .eq("id", voiceNoteId)
+      .single();
+
+    // Build update payload - only include original fields if they're not set
+    const finalUpdatePayload: any = {
+      status: 'completed',
+      category: finalIntent,
+      
+      // Always update current and final fields
+      transcript_raw_current: transcriptRaw,   // Current native (no edits yet)
+      transcript_en_current: transcriptEn,     // Current English (no edits yet)
+      transcript_final: transcriptEn,          // Final approved text (English)
+      
+      // Legacy fields for backward compatibility
+      transcription: legacyTranscription,      // Formatted for UI display
+      transcript_raw: transcriptRaw,           // Legacy raw field
+      
+      // FIXED: translated_transcription should be English only
+      translated_transcription: translatedTranscriptions,
+      
+      // Language detection fields
+      detected_language: languageName,         // Human-readable
+      detected_language_code: detectedLangCode, // ISO code
+      
+      // FIXED: ASR confidence now populated
+      asr_confidence: asrConfidence || null
+    };
+
+    // CRITICAL: Only set original fields if they don't exist (immutable)
+    if (!currentVoiceNote?.transcript_raw_original) {
+      finalUpdatePayload.transcript_raw_original = transcriptRaw;
+    }
+    if (!currentVoiceNote?.transcript_en_original) {
+      finalUpdatePayload.transcript_en_original = transcriptEn;
+    }
 
     dbOperations.push(
-      supabase.from("voice_notes").update({
-        status: 'completed',
-        category: finalIntent,
-        
-        // NEW ARCHITECTURE (canonical fields)
-        transcript_raw_current: transcriptRaw,
-        transcript_en_current: transcriptEn,
-        transcript_final: transcriptEn,
-        
-        // LEGACY COMPATIBILITY (for existing cards)
-        transcription: legacyTranscription,
-        
-        // Language metadata
-        detected_language: LANGUAGE_NAMES[detectedLangCode] || detectedLangCode,
-        detected_language_code: detectedLangCode,
-        
-      }).eq("id", voiceNoteId)
+      supabase.from("voice_notes").update(finalUpdatePayload).eq("id", voiceNoteId)
     );
 
     /* --------------------------------------------------
@@ -431,6 +504,7 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
     }
 
     console.log("✓ All data written successfully");
+    console.log(`✓ Fields populated: transcript_raw_original=${!!transcriptRaw}, transcript_en_original=${!!transcriptEn}, asr_confidence=${asrConfidence}`);
     console.log("=== Processing Complete ===");
 
     return new Response(
@@ -439,7 +513,8 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         voice_note_id: voiceNoteId,
         intent: finalIntent,
         priority: finalPriority,
-        action_created: !!actionCategory
+        action_created: !!actionCategory,
+        asr_confidence: asrConfidence
       }), 
       { status: 200, headers: corsHeaders }
     );
@@ -462,6 +537,10 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
    HELPER FUNCTIONS
 ============================================================ */
 
+/**
+ * Performs ASR using Groq or OpenAI Whisper
+ * FIXED: Now returns confidence score
+ */
 async function performASR(provider: string, key: string, audioUrl: string) {
   console.log(`  → Fetching audio from storage...`);
   const audioRes = await fetch(audioUrl);
@@ -494,12 +573,28 @@ async function performASR(provider: string, key: string, audioUrl: string) {
     throw new Error(`ASR failed: ${data.error?.message}`);
   }
 
+  // FIXED: Extract confidence score from segments
+  let confidence = null;
+  if (data.segments && data.segments.length > 0) {
+    // Calculate average confidence across all segments
+    const avgConfidence = data.segments.reduce((sum: number, seg: any) => {
+      return sum + (seg.avg_logprob || seg.confidence || 0);
+    }, 0) / data.segments.length;
+    
+    // Convert log probability to 0-1 confidence if needed
+    confidence = avgConfidence < 0 ? Math.exp(avgConfidence) : avgConfidence;
+  }
+
   return { 
     text: data.text, 
-    language: data.language 
+    language: data.language,
+    confidence: confidence  // FIXED: Return confidence score
   };
 }
 
+/**
+ * Calls LLM with registry-based prompts
+ */
 async function callRegistryLLM(
   provider: string, 
   key: string, 
@@ -519,6 +614,7 @@ async function callRegistryLLM(
 
   let systemPrompt = options.prompt;
   
+  // Ensure JSON mode is explicit
   if (options.isJson && !systemPrompt.toLowerCase().includes('json')) {
     systemPrompt += "\n\nReturn the output in valid JSON format.";
   }

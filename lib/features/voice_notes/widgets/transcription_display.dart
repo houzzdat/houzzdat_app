@@ -122,9 +122,9 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
         vertical: AppTheme.spacingS,
       ),
       decoration: BoxDecoration(
-        color: AppTheme.warningOrange.withOpacity(0.1),
+        color: AppTheme.warningOrange.withValues(alpha:0.1),
         borderRadius: BorderRadius.circular(AppTheme.radiusS),
-        border: Border.all(color: AppTheme.warningOrange.withOpacity(0.3)),
+        border: Border.all(color: AppTheme.warningOrange.withValues(alpha:0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -187,11 +187,36 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
         'last_edited_at': DateTime.now().toIso8601String(),
       }).eq('id', widget.noteId);
 
+      // Record edit in voice_note_edits audit table
+      try {
+        final editCountResult = await _supabase
+            .from('voice_note_edits')
+            .select('edit_number')
+            .eq('voice_note_id', widget.noteId)
+            .order('edit_number', ascending: false)
+            .limit(1)
+            .maybeSingle();
+
+        final nextEditNumber = (editCountResult?['edit_number'] as int? ?? 0) + 1;
+
+        await _supabase.from('voice_note_edits').insert({
+          'voice_note_id': widget.noteId,
+          'edit_number': nextEditNumber,
+          'before_text': isNative ? original : translated,
+          'after_text': text,
+          'edited_by': _supabase.auth.currentUser?.id,
+          'edit_reason': 'clarification',
+        });
+      } catch (editLogError) {
+        debugPrint('Warning: Could not log edit to voice_note_edits: $editLogError');
+        // Non-fatal: the edit itself succeeded, just the audit log failed
+      }
+
       if (mounted) {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ Transcription updated!'),
+            content: Text('Transcription updated!'),
             backgroundColor: AppTheme.successGreen,
             duration: Duration(seconds: 2),
           ),
@@ -223,14 +248,14 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
       decoration: BoxDecoration(
         color: isNative
             ? Colors.white
-            : AppTheme.infoBlue.withOpacity(0.05),
+            : AppTheme.infoBlue.withValues(alpha:0.05),
         borderRadius: BorderRadius.circular(AppTheme.radiusM),
         border: Border.all(
           color: isLocked
-              ? AppTheme.warningOrange.withOpacity(0.3)
+              ? AppTheme.warningOrange.withValues(alpha:0.3)
               : isNative
-                  ? AppTheme.textSecondary.withOpacity(0.2)
-                  : AppTheme.infoBlue.withOpacity(0.1),
+                  ? AppTheme.textSecondary.withValues(alpha:0.2)
+                  : AppTheme.infoBlue.withValues(alpha:0.1),
         ),
       ),
       child: Column(
@@ -370,9 +395,9 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
             padding: const EdgeInsets.all(AppTheme.spacingM),
             margin: const EdgeInsets.only(bottom: AppTheme.spacingM),
             decoration: BoxDecoration(
-              color: AppTheme.warningOrange.withOpacity(0.1),
+              color: AppTheme.warningOrange.withValues(alpha:0.1),
               borderRadius: BorderRadius.circular(AppTheme.radiusM),
-              border: Border.all(color: AppTheme.warningOrange.withOpacity(0.3)),
+              border: Border.all(color: AppTheme.warningOrange.withValues(alpha:0.3)),
             ),
             child: Row(
               children: [

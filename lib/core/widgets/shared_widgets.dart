@@ -115,9 +115,9 @@ class CategoryBadge extends StatelessWidget {
         vertical: AppTheme.spacingXS,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(AppTheme.radiusS),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -148,31 +148,31 @@ class PriorityIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Color color;
-    String emoji;
-    
+    IconData icon;
+
     switch (priority.toLowerCase()) {
       case 'high':
         color = AppTheme.errorRed;
-        emoji = '🔴';
+        icon = Icons.arrow_upward;
         break;
       case 'medium':
       case 'med':
         color = AppTheme.warningOrange;
-        emoji = '🟡';
+        icon = Icons.remove;
         break;
       case 'low':
         color = AppTheme.successGreen;
-        emoji = '🟢';
+        icon = Icons.arrow_downward;
         break;
       default:
         color = AppTheme.textSecondary;
-        emoji = '⚪';
+        icon = Icons.remove;
     }
 
     return CircleAvatar(
-      backgroundColor: color,
+      backgroundColor: color.withValues(alpha: 0.15),
       radius: 20,
-      child: Text(emoji, style: const TextStyle(fontSize: 18)),
+      child: Icon(icon, color: color, size: 20),
     );
   }
 }
@@ -213,6 +213,98 @@ class ActionButton extends StatelessWidget {
         ),
       ),
       onPressed: onPressed,
+    );
+  }
+}
+
+/// Shimmer loading card for skeleton loading states
+class ShimmerLoadingCard extends StatefulWidget {
+  final double height;
+  final double? width;
+
+  const ShimmerLoadingCard({
+    super.key,
+    this.height = 100,
+    this.width,
+  });
+
+  @override
+  State<ShimmerLoadingCard> createState() => _ShimmerLoadingCardState();
+}
+
+class _ShimmerLoadingCardState extends State<ShimmerLoadingCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat();
+    _animation = Tween<double>(begin: -1.0, end: 2.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOutSine),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Container(
+          height: widget.height,
+          width: widget.width,
+          margin: const EdgeInsets.symmetric(
+            horizontal: AppTheme.spacingM,
+            vertical: AppTheme.spacingS,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.radiusL),
+            gradient: LinearGradient(
+              begin: Alignment(_animation.value - 1, 0),
+              end: Alignment(_animation.value, 0),
+              colors: [
+                AppTheme.backgroundGrey,
+                AppTheme.surfaceGrey,
+                AppTheme.backgroundGrey,
+              ],
+              stops: const [0.0, 0.5, 1.0],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+}
+
+/// Shimmer loading list — shows multiple shimmer cards
+class ShimmerLoadingList extends StatelessWidget {
+  final int itemCount;
+  final double itemHeight;
+
+  const ShimmerLoadingList({
+    super.key,
+    this.itemCount = 5,
+    this.itemHeight = 100,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        return ShimmerLoadingCard(height: itemHeight);
+      },
     );
   }
 }

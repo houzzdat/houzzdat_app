@@ -30,13 +30,120 @@ class _ProjectsTabState extends State<ProjectsTab> {
 
   Future<void> _handleAddProject() async {
     final result = await ProjectDialogs.showAddProjectDialog(context);
-    if (result != null) {
-      await _supabase.from('projects').insert({
-        'name': result['name'],
-        'location': result['location'],
-        'account_id': widget.accountId,
-      });
+    if (result == null) return;
+
+    try {
+      // 1. Insert the project
+      final projectResponse = await _supabase
+          .from('projects')
+          .insert({
+            'name': result['name'],
+            'location': result['location'],
+            'account_id': widget.accountId,
+          })
+          .select('id')
+          .single();
+
+      final projectId = projectResponse['id'] as String;
+
+      // 2. Handle owner linking if owner info was provided
+      final existingOwnerId = result['existingOwnerId'];
+      final ownerEmail = result['ownerEmail'];
+      final ownerPhone = result['ownerPhone'];
+
+      if (existingOwnerId != null && existingOwnerId.isNotEmpty) {
+        // Link existing owner to project
+        await _supabase.from('project_owners').insert({
+          'project_id': projectId,
+          'owner_id': existingOwnerId,
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Project created and linked to existing owner'),
+              backgroundColor: AppTheme.successGreen,
+            ),
+          );
+        }
+      } else if (ownerEmail != null && ownerEmail.isNotEmpty) {
+        // Create new owner via invite-user edge function
+        final ownerName = result['ownerName'] ?? '';
+        final ownerPassword = result['ownerPassword'] ?? '';
+
+        if (ownerPassword.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Project created, but owner needs a password. Skipped owner creation.'),
+                backgroundColor: AppTheme.warningOrange,
+              ),
+            );
+          }
+          return;
+        }
+
+        final response = await _supabase.functions.invoke(
+          'invite-user',
+          body: {
+            'email': ownerEmail,
+            'password': ownerPassword,
+            'role': 'owner',
+            'account_id': widget.accountId,
+            'full_name': ownerName,
+            if (ownerPhone != null && ownerPhone.isNotEmpty)
+              'phone_number': ownerPhone,
+          },
+        );
+
+        if (response.status == 200) {
+          final newUserId = response.data?['user_id'];
+          if (newUserId != null) {
+            await _supabase.from('project_owners').insert({
+              'project_id': projectId,
+              'owner_id': newUserId,
+            });
+          }
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Project created with new owner account'),
+                backgroundColor: AppTheme.successGreen,
+              ),
+            );
+          }
+        } else {
+          final errorMsg = response.data?['error'] ?? 'Failed to create owner';
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Project created, but owner creation failed: $errorMsg'),
+                backgroundColor: AppTheme.warningOrange,
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error creating project: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Could not delete site. Please try again.'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
+      }
     }
+  }
+
+  Future<void> _handleAssignOwner(Map<String, dynamic> project) async {
+    await ProjectDialogs.showAssignOwnerDialog(
+      context,
+      project,
+      widget.accountId ?? '',
+    );
   }
 
   Future<void> _handleEditProject(Map<String, dynamic> project) async {
@@ -136,6 +243,7 @@ class _ProjectsTabState extends State<ProjectsTab> {
                     onEdit: () => _handleEditProject(project),
                     onDelete: () => _handleDeleteProject(project),
                     onAssignUsers: () => _handleAssignUsers(project),
+                    onAssignOwner: () => _handleAssignOwner(project),
                   );
                 },
               );

@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_card.dart';
 import 'package:houzzdat_app/features/worker/models/voice_note_card_view_model.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
+import 'package:houzzdat_app/core/theme/app_theme.dart';
 
 class ConstructionHomeScreen extends StatefulWidget {
   const ConstructionHomeScreen({super.key});
@@ -90,8 +91,8 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('✅ Voice note submitted!'),
-                    backgroundColor: Colors.green,
+                    content: Text('Voice note submitted!'),
+                    backgroundColor: AppTheme.successGreen,
                   ),
                 );
               }
@@ -101,7 +102,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e')),
+            SnackBar(content: const Text('Could not upload voice note. Please try again.'), backgroundColor: AppTheme.errorRed),
           );
         }
       } finally {
@@ -160,23 +161,23 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   Widget build(BuildContext context) {
     if (_isInitializing || _accountId == null) {
       return Scaffold(
-        backgroundColor: const Color(0xFFF4F4F4),
+        backgroundColor: AppTheme.backgroundGrey,
         appBar: AppBar(
           title: const Text('SITE LOGS'),
-          backgroundColor: const Color(0xFF1A237E),
+          backgroundColor: AppTheme.primaryIndigo,
           foregroundColor: Colors.white,
         ),
-        body: const Center(
-          child: CircularProgressIndicator(color: Color(0xFF1A237E)),
+        body: Center(
+          child: CircularProgressIndicator(color: AppTheme.primaryIndigo),
         ),
       );
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F4F4),
+      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: const Text('SITE LOGS'),
-        backgroundColor: const Color(0xFF1A237E),
+        backgroundColor: AppTheme.primaryIndigo,
         foregroundColor: Colors.white,
         actions: [
           IconButton(
@@ -196,7 +197,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
                 "COMPANY FEED",
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: Colors.grey,
+                  color: AppTheme.textSecondary,
                 ),
               ),
             ),
@@ -223,7 +224,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
             onTap: _isUploading ? null : _handleRecording,
             child: CircleAvatar(
               radius: 50,
-              backgroundColor: _isRecording ? Colors.red : const Color(0xFFFFC107),
+              backgroundColor: _isRecording ? AppTheme.errorRed : AppTheme.accentAmber,
               child: _isUploading 
                 ? const CircularProgressIndicator(color: Colors.black)
                 : Icon(_isRecording ? Icons.stop : Icons.mic, size: 40, color: Colors.black),
@@ -250,7 +251,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                const Icon(Icons.error_outline, size: 48, color: AppTheme.errorRed),
                 const SizedBox(height: 16),
                 Text('Error: ${snapshot.error}'),
               ],
@@ -263,16 +264,16 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.mic_none, size: 64, color: Colors.grey),
+                Icon(Icons.mic_none, size: 64, color: AppTheme.textSecondary),
                 SizedBox(height: 16),
                 Text(
                   "No voice notes yet",
-                  style: TextStyle(color: Colors.grey),
+                  style: TextStyle(color: AppTheme.textSecondary),
                 ),
                 SizedBox(height: 8),
                 Text(
                   "Tap the mic button above to create your first note",
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                 ),
               ],
             ),

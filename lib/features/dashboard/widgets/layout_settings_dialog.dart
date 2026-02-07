@@ -39,7 +39,7 @@ class _LayoutSettingsDialogState extends State<LayoutSettingsDialog> {
                 Container(
                   padding: const EdgeInsets.all(AppTheme.spacingM),
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryIndigo.withOpacity(0.1),
+                    color: AppTheme.primaryIndigo.withValues(alpha:0.1),
                     borderRadius: BorderRadius.circular(AppTheme.radiusM),
                   ),
                   child: const Icon(
@@ -166,7 +166,7 @@ class _LayoutOption extends StatelessWidget {
         padding: const EdgeInsets.all(AppTheme.spacingM),
         decoration: BoxDecoration(
           color: isSelected
-              ? AppTheme.primaryIndigo.withOpacity(0.1)
+              ? AppTheme.primaryIndigo.withValues(alpha:0.1)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(AppTheme.radiusL),
           border: Border.all(

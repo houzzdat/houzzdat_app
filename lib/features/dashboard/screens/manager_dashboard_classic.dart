@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/actions_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/projects_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/team_tab.dart';
@@ -41,9 +42,9 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
     // Changed condition to check for empty string too
     if (_accountId == null || _accountId!.isEmpty) {
       return const Scaffold(
-        backgroundColor: Color(0xFFF4F4F4),
+        backgroundColor: AppTheme.backgroundGrey,
         body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF1A237E)),
+          child: CircularProgressIndicator(color: AppTheme.primaryIndigo),
         ),
       );
     }
@@ -55,10 +56,10 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
     return DefaultTabController(
       length: 4,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF4F4F4),
+        backgroundColor: AppTheme.backgroundGrey,
         appBar: AppBar(
-          title: const Text("MANAGER DASHBOARD"), 
-          backgroundColor: const Color(0xFF1A237E), 
+          title: const Text("MANAGER DASHBOARD"),
+          backgroundColor: AppTheme.primaryIndigo,
           foregroundColor: Colors.white,
           bottom: const TabBar(
             tabs: [

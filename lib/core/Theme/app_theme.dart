@@ -11,15 +11,18 @@ class AppTheme {
   static const Color backgroundGrey = Color(0xFFF4F4F4);
   static const Color cardWhite = Colors.white;
   
-  // Status Colors
-  static const Color successGreen = Colors.green;
-  static const Color warningOrange = Colors.orange;
-  static const Color errorRed = Colors.red;
-  static const Color infoBlue = Colors.blue;
-  
+  // Status Colors — softer, professional tones
+  static const Color successGreen = Color(0xFF2E7D32);
+  static const Color warningOrange = Color(0xFFEF6C00);
+  static const Color errorRed = Color(0xFFD32F2F);
+  static const Color infoBlue = Color(0xFF1565C0);
+
+  // Surface — subtle indigo-tinted grey for depth
+  static const Color surfaceGrey = Color(0xFFE8EAF6);
+
   // Text Colors
   static const Color textPrimary = Colors.black87;
-  static const Color textSecondary = Colors.grey;
+  static const Color textSecondary = Color(0xFF757575);
   static const Color textOnPrimary = Colors.white;
 
   // ========== TYPOGRAPHY ==========
@@ -130,9 +133,20 @@ class AppTheme {
           vertical: spacingM,
         ),
       ),
-      dividerTheme: const DividerThemeData(
-        color: textSecondary,
+      dividerTheme: DividerThemeData(
+        color: Colors.grey.shade300,
         thickness: 1,
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radiusM),
+        ),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(radiusXL)),
+        ),
       ),
     );
   }

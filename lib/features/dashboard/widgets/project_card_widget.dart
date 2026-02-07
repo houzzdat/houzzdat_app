@@ -6,6 +6,7 @@ class ProjectCardWidget extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onAssignUsers;
+  final VoidCallback? onAssignOwner;
 
   const ProjectCardWidget({
     super.key,
@@ -13,6 +14,7 @@ class ProjectCardWidget extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onAssignUsers,
+    this.onAssignOwner,
   });
 
   @override
@@ -43,6 +45,17 @@ class ProjectCardWidget extends StatelessWidget {
                 ],
               ),
             ),
+            if (onAssignOwner != null)
+              const PopupMenuItem(
+                value: 'assign_owner',
+                child: Row(
+                  children: [
+                    Icon(Icons.supervisor_account, size: 20),
+                    SizedBox(width: AppTheme.spacingS),
+                    Text("Assign Owner"),
+                  ],
+                ),
+              ),
             const PopupMenuItem(
               value: 'edit',
               child: Row(
@@ -68,6 +81,9 @@ class ProjectCardWidget extends StatelessWidget {
             switch (value) {
               case 'assign':
                 onAssignUsers();
+                break;
+              case 'assign_owner':
+                onAssignOwner?.call();
                 break;
               case 'edit':
                 onEdit();

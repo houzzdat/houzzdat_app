@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:houzzdat_app/core/theme/app_theme.dart';
 
 class VoiceNotePlayerCard extends StatefulWidget {
   final Map<String, dynamic> note;
@@ -171,7 +172,7 @@ class _VoiceNotePlayerCardState extends State<VoiceNotePlayerCard> {
             Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: isThreadedReply ? Colors.blue.shade100 : const Color(0xFF1A237E),
+                  backgroundColor: isThreadedReply ? Colors.blue.shade100 : AppTheme.primaryIndigo,
                   child: Icon(
                     isThreadedReply ? Icons.reply : Icons.mic,
                     color: isThreadedReply ? Colors.blue : Colors.white,
@@ -233,7 +234,7 @@ class _VoiceNotePlayerCardState extends State<VoiceNotePlayerCard> {
                       _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
                       size: 40,
                     ),
-                    color: const Color(0xFF1A237E),
+                    color: AppTheme.primaryIndigo,
                     onPressed: _togglePlayback,
                   ),
                   Expanded(
@@ -251,7 +252,7 @@ class _VoiceNotePlayerCardState extends State<VoiceNotePlayerCard> {
                             onChanged: (value) async {
                               await _audioPlayer.seek(Duration(seconds: value.toInt()));
                             },
-                            activeColor: const Color(0xFF1A237E),
+                            activeColor: AppTheme.primaryIndigo,
                             inactiveColor: Colors.grey[300],
                           ),
                         ),
@@ -282,9 +283,9 @@ class _VoiceNotePlayerCardState extends State<VoiceNotePlayerCard> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.05),
+                    color: Colors.orange.withValues(alpha:0.05),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.withOpacity(0.2)),
+                    border: Border.all(color: Colors.orange.withValues(alpha:0.2)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -324,9 +325,9 @@ class _VoiceNotePlayerCardState extends State<VoiceNotePlayerCard> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.05),
+                    color: Colors.blue.withValues(alpha:0.05),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.withOpacity(0.1)),
+                    border: Border.all(color: Colors.blue.withValues(alpha:0.1)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -363,9 +364,9 @@ class _VoiceNotePlayerCardState extends State<VoiceNotePlayerCard> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.05),
+                    color: Colors.blue.withValues(alpha:0.05),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.withOpacity(0.1)),
+                    border: Border.all(color: Colors.blue.withValues(alpha:0.1)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

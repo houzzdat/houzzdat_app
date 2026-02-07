@@ -4,6 +4,7 @@ import 'package:houzzdat_app/features/auth/screens/login_screen.dart';
 import 'package:houzzdat_app/features/auth/screens/super_admin_screen.dart';
 import 'package:houzzdat_app/features/dashboard/screens/manager_dashboard.dart';
 import 'package:houzzdat_app/features/worker/screens/construction_home_screen.dart';
+import 'package:houzzdat_app/features/owner/screens/owner_dashboard.dart';
 
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
@@ -37,7 +38,9 @@ class AuthWrapper extends StatelessWidget {
             }
 
             final role = userData['role'];
-            if (role == 'manager' || role == 'admin') {
+            if (role == 'owner') {
+              return const OwnerDashboard();
+            } else if (role == 'manager' || role == 'admin') {
               return const ManagerDashboard();
             } else {
               return const ConstructionHomeScreen();

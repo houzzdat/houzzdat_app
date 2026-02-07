@@ -1,10 +1,10 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/action_card_widget.dart';
 
 /// Classic list view of actions for Manager Dashboard
-/// Implements the SiteVoice Manager Action Lifecycle with filters
+/// Implements the SiteVoice Manager Action Lifecycle with filters, search, and sort
 class ActionsTab extends StatefulWidget {
   final String accountId;
 
@@ -16,10 +16,13 @@ class ActionsTab extends StatefulWidget {
 
 class _ActionsTabState extends State<ActionsTab> {
   final _supabase = Supabase.instance.client;
+  final _searchController = TextEditingController();
   List<Map<String, dynamic>> _actions = [];
   bool _isLoading = true;
   String _filterStatus = 'all';
   String _filterCategory = 'all';
+  String _sortBy = 'newest';
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -69,21 +72,106 @@ class _ActionsTabState extends State<ActionsTab> {
     }
   }
 
-  List<Map<String, dynamic>> get _filteredActions {
-    return _actions.where((action) {
-      final statusMatch = _filterStatus == 'all' || 
+  List<Map<String, dynamic>> get _filteredAndSortedActions {
+    var result = _actions.where((action) {
+      final statusMatch = _filterStatus == 'all' ||
           action['status'] == _filterStatus;
-      final categoryMatch = _filterCategory == 'all' || 
+      final categoryMatch = _filterCategory == 'all' ||
           action['category'] == _filterCategory;
-      return statusMatch && categoryMatch;
+
+      // Search filter
+      bool searchMatch = true;
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase();
+        final summary = (action['summary'] ?? '').toString().toLowerCase();
+        final details = (action['details'] ?? '').toString().toLowerCase();
+        final analysis = (action['ai_analysis'] ?? '').toString().toLowerCase();
+        searchMatch = summary.contains(query) ||
+            details.contains(query) ||
+            analysis.contains(query);
+      }
+
+      return statusMatch && categoryMatch && searchMatch;
     }).toList();
+
+    // Apply sorting
+    switch (_sortBy) {
+      case 'newest':
+        result.sort((a, b) => _compareTimestamps(b, a, 'created_at'));
+        break;
+      case 'oldest':
+        result.sort((a, b) => _compareTimestamps(a, b, 'created_at'));
+        break;
+      case 'priority_high':
+        result.sort((a, b) => _comparePriority(a, b));
+        break;
+      case 'priority_low':
+        result.sort((a, b) => _comparePriority(b, a));
+        break;
+      case 'recently_updated':
+        result.sort((a, b) => _compareTimestamps(b, a, 'updated_at'));
+        break;
+    }
+
+    return result;
+  }
+
+  int _compareTimestamps(
+      Map<String, dynamic> a, Map<String, dynamic> b, String field) {
+    final aTime = a[field]?.toString() ?? '';
+    final bTime = b[field]?.toString() ?? '';
+    return aTime.compareTo(bTime);
+  }
+
+  int _comparePriority(Map<String, dynamic> a, Map<String, dynamic> b) {
+    const priorityOrder = {'High': 0, 'Med': 1, 'Low': 2};
+    final aPriority = priorityOrder[a['priority']?.toString()] ?? 1;
+    final bPriority = priorityOrder[b['priority']?.toString()] ?? 1;
+    return aPriority.compareTo(bPriority);
   }
 
   @override
   Widget build(BuildContext context) {
+    final filteredActions = _filteredAndSortedActions;
+
     return Column(
       children: [
-        // Filter Bar
+        // Search Bar
+        Container(
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.spacingM, AppTheme.spacingM, AppTheme.spacingM, 0,
+          ),
+          color: Colors.white,
+          child: TextField(
+            controller: _searchController,
+            onChanged: (value) => setState(() => _searchQuery = value),
+            decoration: InputDecoration(
+              hintText: 'Search actions...',
+              prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 20),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: AppTheme.backgroundGrey,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusL),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: AppTheme.spacingM,
+                vertical: AppTheme.spacingS,
+              ),
+            ),
+          ),
+        ),
+
+        // Filter & Sort Bar
         Container(
           padding: const EdgeInsets.all(AppTheme.spacingM),
           color: Colors.white,
@@ -103,7 +191,7 @@ class _ActionsTabState extends State<ActionsTab> {
                   (value) => setState(() => _filterStatus = value),
                 ),
               ),
-              const SizedBox(width: AppTheme.spacingM),
+              const SizedBox(width: AppTheme.spacingS),
               Expanded(
                 child: _buildFilterChip(
                   'Category',
@@ -116,6 +204,34 @@ class _ActionsTabState extends State<ActionsTab> {
                   ],
                   (value) => setState(() => _filterCategory = value),
                 ),
+              ),
+              const SizedBox(width: AppTheme.spacingS),
+              // Sort button
+              PopupMenuButton<String>(
+                onSelected: (value) => setState(() => _sortBy = value),
+                tooltip: 'Sort',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.spacingS,
+                    vertical: AppTheme.spacingS,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppTheme.primaryIndigo),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusL),
+                  ),
+                  child: const Icon(
+                    Icons.sort,
+                    color: AppTheme.primaryIndigo,
+                    size: 20,
+                  ),
+                ),
+                itemBuilder: (context) => [
+                  _buildSortItem('newest', 'Newest First', Icons.arrow_downward),
+                  _buildSortItem('oldest', 'Oldest First', Icons.arrow_upward),
+                  _buildSortItem('priority_high', 'Priority: High → Low', Icons.priority_high),
+                  _buildSortItem('priority_low', 'Priority: Low → High', Icons.low_priority),
+                  _buildSortItem('recently_updated', 'Recently Updated', Icons.update),
+                ],
               ),
             ],
           ),
@@ -152,6 +268,30 @@ class _ActionsTabState extends State<ActionsTab> {
           ),
         ),
 
+        // Results count when searching
+        if (_searchQuery.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.spacingM,
+              vertical: AppTheme.spacingS,
+            ),
+            color: AppTheme.infoBlue.withValues(alpha: 0.05),
+            child: Row(
+              children: [
+                const Icon(Icons.search, size: 16, color: AppTheme.infoBlue),
+                const SizedBox(width: AppTheme.spacingS),
+                Text(
+                  '${filteredActions.length} result${filteredActions.length == 1 ? '' : 's'} for "$_searchQuery"',
+                  style: const TextStyle(
+                    color: AppTheme.infoBlue,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
         // Actions List
         Expanded(
           child: _isLoading
@@ -160,29 +300,35 @@ class _ActionsTabState extends State<ActionsTab> {
                     color: AppTheme.primaryIndigo,
                   ),
                 )
-              : _filteredActions.isEmpty
+              : filteredActions.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            Icons.inbox_outlined,
+                            _searchQuery.isNotEmpty
+                                ? Icons.search_off
+                                : Icons.inbox_outlined,
                             size: 64,
-                            color: AppTheme.textSecondary.withOpacity(0.3),
+                            color: AppTheme.textSecondary.withValues(alpha: 0.3),
                           ),
                           const SizedBox(height: AppTheme.spacingM),
                           Text(
-                            'No actions found',
+                            _searchQuery.isNotEmpty
+                                ? 'No matching actions'
+                                : 'No actions found',
                             style: TextStyle(
-                              color: AppTheme.textSecondary.withOpacity(0.5),
+                              color: AppTheme.textSecondary.withValues(alpha: 0.5),
                               fontSize: 16,
                             ),
                           ),
                           const SizedBox(height: AppTheme.spacingS),
                           Text(
-                            'Try changing your filters',
+                            _searchQuery.isNotEmpty
+                                ? 'Try a different search term'
+                                : 'Try changing your filters',
                             style: TextStyle(
-                              color: AppTheme.textSecondary.withOpacity(0.5),
+                              color: AppTheme.textSecondary.withValues(alpha: 0.5),
                               fontSize: 14,
                             ),
                           ),
@@ -196,10 +342,10 @@ class _ActionsTabState extends State<ActionsTab> {
                           top: AppTheme.spacingS,
                           bottom: AppTheme.spacingXL,
                         ),
-                        itemCount: _filteredActions.length,
+                        itemCount: filteredActions.length,
                         itemBuilder: (context, index) {
                           return ActionCardWidget(
-                            item: _filteredActions[index],
+                            item: filteredActions[index],
                             onRefresh: _loadActions,
                           );
                         },
@@ -207,6 +353,39 @@ class _ActionsTabState extends State<ActionsTab> {
                     ),
         ),
       ],
+    );
+  }
+
+  PopupMenuItem<String> _buildSortItem(
+      String value, String label, IconData icon) {
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 18,
+            color: _sortBy == value
+                ? AppTheme.primaryIndigo
+                : AppTheme.textSecondary,
+          ),
+          const SizedBox(width: AppTheme.spacingS),
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight:
+                  _sortBy == value ? FontWeight.bold : FontWeight.normal,
+              color: _sortBy == value
+                  ? AppTheme.primaryIndigo
+                  : AppTheme.textPrimary,
+            ),
+          ),
+          if (_sortBy == value) ...[
+            const Spacer(),
+            const Icon(Icons.check, size: 18, color: AppTheme.primaryIndigo),
+          ],
+        ],
+      ),
     );
   }
 
@@ -230,16 +409,21 @@ class _ActionsTabState extends State<ActionsTab> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              '$label: ${options.firstWhere((o) => o.$1 == currentValue).$2}',
-              style: const TextStyle(
-                color: AppTheme.primaryIndigo,
-                fontWeight: FontWeight.w500,
+            Expanded(
+              child: Text(
+                '$label: ${options.firstWhere((o) => o.$1 == currentValue).$2}',
+                style: const TextStyle(
+                  color: AppTheme.primaryIndigo,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
             const Icon(
               Icons.arrow_drop_down,
               color: AppTheme.primaryIndigo,
+              size: 18,
             ),
           ],
         ),
@@ -262,9 +446,9 @@ class _ActionsTabState extends State<ActionsTab> {
         vertical: AppTheme.spacingS,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(AppTheme.radiusM),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
         children: [
@@ -291,6 +475,7 @@ class _ActionsTabState extends State<ActionsTab> {
 
   @override
   void dispose() {
+    _searchController.dispose();
     _supabase.removeChannel(_supabase.channel('action_items_classic_changes'));
     super.dispose();
   }

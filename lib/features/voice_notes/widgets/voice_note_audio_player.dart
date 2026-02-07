@@ -188,9 +188,9 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
     return Container(
       padding: const EdgeInsets.all(AppTheme.spacingM),
       decoration: BoxDecoration(
-        color: AppTheme.errorRed.withOpacity(0.1),
+        color: AppTheme.errorRed.withValues(alpha:0.1),
         borderRadius: BorderRadius.circular(AppTheme.radiusM),
-        border: Border.all(color: AppTheme.errorRed.withOpacity(0.3)),
+        border: Border.all(color: AppTheme.errorRed.withValues(alpha:0.3)),
       ),
       child: Row(
         children: [
@@ -280,9 +280,9 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
                       overlayRadius: 12,
                     ),
                     activeTrackColor: AppTheme.primaryIndigo,
-                    inactiveTrackColor: AppTheme.textSecondary.withOpacity(0.3),
+                    inactiveTrackColor: AppTheme.textSecondary.withValues(alpha:0.3),
                     thumbColor: AppTheme.primaryIndigo,
-                    overlayColor: AppTheme.primaryIndigo.withOpacity(0.2),
+                    overlayColor: AppTheme.primaryIndigo.withValues(alpha:0.2),
                   ),
                   child: Slider(
                     value: _position.inSeconds.toDouble().clamp(
