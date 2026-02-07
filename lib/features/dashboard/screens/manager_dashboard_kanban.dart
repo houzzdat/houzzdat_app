@@ -23,6 +23,7 @@ class _ManagerDashboardKanbanState extends State<ManagerDashboardKanban> {
   
   String? _accountId;
   String? _projectId;
+  String? _projectName;
   int _currentIndex = 0;
   bool _isRecording = false;
   bool _isInitializing = true;
@@ -42,10 +43,27 @@ class _ManagerDashboardKanbanState extends State<ManagerDashboardKanban> {
             .select('account_id, current_project_id')
             .eq('id', user.id)
             .single();
+        final accountId = data['account_id']?.toString();
+        final projectId = data['current_project_id']?.toString();
+
+        // Fetch project name if a project is assigned
+        String? projectName;
+        if (projectId != null) {
+          try {
+            final project = await _supabase
+                .from('projects')
+                .select('name')
+                .eq('id', projectId)
+                .single();
+            projectName = project['name']?.toString();
+          } catch (_) {}
+        }
+
         if (mounted) {
           setState(() {
-            _accountId = data['account_id']?.toString();
-            _projectId = data['current_project_id']?.toString();
+            _accountId = accountId;
+            _projectId = projectId;
+            _projectName = projectName;
             _isInitializing = false;
           });
         }
@@ -125,7 +143,14 @@ class _ManagerDashboardKanbanState extends State<ManagerDashboardKanban> {
     return Scaffold(
       backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
-        title: const Text('MANAGER DASHBOARD'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('MANAGER DASHBOARD', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            if (_projectName != null)
+              Text(_projectName!, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal)),
+          ],
+        ),
         backgroundColor: AppTheme.primaryIndigo,
         foregroundColor: Colors.white,
         elevation: 0,

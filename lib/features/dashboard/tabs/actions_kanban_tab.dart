@@ -294,6 +294,7 @@ class _ActionsKanbanTabState extends State<ActionsKanbanTab>
             child: ActionCardWidget(
               item: items[index],
               onRefresh: _loadActions,
+              stageColor: color,
             ),
           );
         },
