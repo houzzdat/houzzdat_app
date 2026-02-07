@@ -7,26 +7,64 @@
 
 ## Table of Contents
 
-1. [Confidence Tier System (70% Accuracy Baseline)](#1-confidence-tier-system)
-2. [Message Workflow: Worker Voice Note Submission](#2-worker-voice-note-submission)
-3. [Message Workflow: AI Processing Pipeline](#3-ai-processing-pipeline)
-4. [Message Workflow: Manager Actionable Inbox](#4-manager-actionable-inbox)
-5. [Message Workflow: Manager-to-Worker Instructions](#5-manager-to-worker-instructions)
-6. [Message Workflow: Worker Reply Flow](#6-worker-reply-flow)
-7. [Message Workflow: Manager-to-Owner Escalation](#7-manager-to-owner-escalation)
-8. [Message Workflow: Owner Response](#8-owner-response)
-9. [Message Workflow: Proof-of-Work Gate](#9-proof-of-work-gate)
-10. [Notification & Delivery System](#10-notification--delivery-system)
-11. [Validation Gates Summary](#11-validation-gates-summary)
-12. [Visual Design System](#12-visual-design-system)
-13. [Data Model Requirements](#13-data-model-requirements)
-14. [State Machines](#14-state-machines)
-15. [Current State vs. Target State](#15-current-state-vs-target-state)
-16. [Open Questions & Future Decisions](#16-open-questions)
+1. [Decision Matrix: Workflow & Card UI Selections](#1-decision-matrix)
+2. [Confidence Tier System (70% Accuracy Baseline)](#2-confidence-tier-system)
+3. [Message Type Workflows (3 Types)](#3-message-type-workflows)
+4. [Message Card UI: Two-Tier Card](#4-message-card-ui)
+5. [Manager Actionable Inbox](#5-manager-actionable-inbox)
+6. [Message Workflow: Worker Voice Note Submission](#6-worker-voice-note-submission)
+7. [Message Workflow: AI Processing Pipeline](#7-ai-processing-pipeline)
+8. [Message Workflow: Manager-to-Worker Instructions](#8-manager-to-worker-instructions)
+9. [Message Workflow: Worker Reply Flow](#9-worker-reply-flow)
+10. [Message Workflow: Manager-to-Owner Escalation](#10-manager-to-owner-escalation)
+11. [Message Workflow: Owner Response](#11-owner-response)
+12. [Message Workflow: Proof-of-Work Gate](#12-proof-of-work-gate)
+13. [Notification & Delivery System](#13-notification--delivery-system)
+14. [Validation Gates Summary](#14-validation-gates-summary)
+15. [Visual Design System](#15-visual-design-system)
+16. [Data Model Requirements](#16-data-model-requirements)
+17. [State Machines](#17-state-machines)
+18. [Current State vs. Target State](#18-current-state-vs-target-state)
+19. [Open Questions & Future Decisions](#19-open-questions)
 
 ---
 
-## 1. Confidence Tier System
+## 1. Decision Matrix: Workflow & Card UI Selections
+
+**Date decided**: 2026-02-07
+
+### 1.1 Message Type Workflow Picks
+
+For each of the 3 message types, multiple options were evaluated. The selected option balances information density, manager cognitive load, and construction-site realities.
+
+| Message Type | Options Considered | Selected | Rationale |
+|---|---|---|---|
+| **Regular Update** | A: Auto-ACK with Smart Digest, B: Inline Feed Action, **C: Ambient Updates** | **Option C** | Reduces noise — most updates don't need action items. Feed-only with optional promotion. |
+| **Approval Request** | **A: Structured Approval Card**, B: Tiered Approval with Auto-Escalation, C: Approval Queue | **Option A** | Managers need clear extracted data (amounts, materials, requester). Budget-aware escalation deferred to Phase 2. |
+| **Critical Condition** | **A: Red Alert Banner**, B: Escalation Timer + Action Chain, C: Incident Mode | **Option A** | Immediate visibility via persistent banner without overengineering. Escalation timers and incident model deferred to Phase 2. |
+
+### 1.2 Card UI Pick
+
+| Option | Description | Selected |
+|---|---|---|
+| A: Enhanced Current Card | Minimal change — add color bar, time badge, progress dots | No |
+| **B: Two-Tier Card** | Collapsed summary + expanded detail (accordion) | **Yes** |
+| C: Unified Inbox Card | Merge Feed + Actions into single stream | No |
+
+**Rationale**: Two-Tier Card provides the best balance of information density vs. scanability. Managers see the critical info (priority, summary, sender, actions) at a glance in the collapsed state, and expand only when they need full context.
+
+### 1.3 Options Evaluated but Deferred
+
+| Option | Deferred To | Why |
+|---|---|---|
+| Auto-Escalation on budget threshold (Approval Option B) | Phase 2 | Requires configurable budget limits per project — not MVP |
+| SLA timers on approval cards (Approval Option B) | Phase 2 | Needs backend scheduler / cron job infrastructure |
+| Incident Mode (Critical Option C) | Phase 3 | Separate `incidents` table + timeline UI is significant scope |
+| Unified Inbox (Card Option C) | Re-evaluate after MVP feedback | Merging Feed + Actions is a big UX shift; test current model first |
+
+---
+
+## 2. Confidence Tier System
 
 **Decision**: At 70% baseline AI accuracy, the system uses asymmetric risk-based thresholds per action category. False negatives on critical items are more dangerous than false positives.
 
@@ -40,12 +78,12 @@
 
 ### 1.2 Category-Specific Thresholds
 
-| Category | Auto-Surface | Auto-Act | Suppression | Rationale |
-|----------|-------------|---------|-------------|-----------|
-| **Update** | >= 70% | >= 85% | < 50% | Low stakes; worker can dismiss wrong update |
-| **Approval** | >= 70% | NEVER auto-act | < 50% | High stakes; false approval request wastes owner trust |
-| **Action Required** | >= 70% | >= 85% | < 50% | Medium stakes; manager reviews before delegating |
-| **Critical / Safety** | ALWAYS (any %) | NEVER auto-act | NEVER suppress | Safety items must always surface; false negatives are dangerous |
+| Category | Action Item Created? | Auto-Surface | Auto-Act | Suppression | Rationale |
+|----------|---------------------|-------------|---------|-------------|-----------|
+| **Update** | NO (Ambient — Feed only) | Feed tab at any confidence | ACK inline in feed | < 50% shows "AI-suggested" label | Low stakes; no inbox noise; optional promotion to action item |
+| **Approval** | YES | >= 70% | NEVER auto-act | < 50% flagged for review | High stakes; false approval request wastes owner trust |
+| **Action Required** | YES | >= 70% | >= 85% | < 50% flagged for review | Medium stakes; manager reviews before delegating |
+| **Critical / Safety** | YES (always) | ALWAYS (any %) | NEVER auto-act | NEVER suppress | Safety items must always surface; false negatives are dangerous |
 
 ### 1.3 Confidence Display Rules
 
@@ -64,11 +102,380 @@ Display on every action card:
 
 ---
 
-## 2. Worker Voice Note Submission
+## 3. Message Type Workflows (3 Types)
+
+### 3.1 Regular Update — Ambient Updates (Option C)
+
+**Decision**: Updates do NOT create action items. They appear only in the Feed tab as informational entries. Managers can optionally promote an update to an action item if follow-up is needed.
+
+**Rationale**: Most updates are FYI. Creating action items for every update floods the manager's inbox with items that don't need action, increasing cognitive load and burying the items that matter.
+
+#### Flow
+
+```
+Worker records voice note
+  -> AI classifies as intent: update
+  -> Voice note appears in Feed tab with "UPDATE" badge (green)
+  -> NO action_item created
+  -> Manager sees it in the feed while browsing
+  -> Options on the feed card:
+     [ACK]           -> Marks as acknowledged (green checkmark overlay)
+     [ADD NOTE]      -> Appends a text note to the voice note
+     [CREATE ACTION] -> Promotes to action_item (manager picks category + priority)
+```
+
+#### UX Spec
+
+| Element | Spec |
+|---------|------|
+| Feed card badge | Green "UPDATE" chip, top-right |
+| Acknowledged state | Green checkmark overlay on card, card dims slightly |
+| ACK button | Outlined green, inline on card (not in a bottom sheet) |
+| ADD NOTE button | Outlined blue, inline on card |
+| CREATE ACTION button | Text-only, in overflow menu `[...]` |
+| Unacknowledged indicator | Subtle blue dot (left of timestamp), no urgency escalation |
+| Auto-cleanup | Unacknowledged updates older than 7 days move to "Archived" in feed |
+
+#### Impact on Existing System
+
+- Edge function: when `intent == 'update'`, skip `action_items` INSERT entirely
+- Feed tab: add ACK / ADD NOTE buttons directly on VoiceNoteCard
+- Actions tab: no longer shows "Updates" section (reduces noise)
+- Confidence routing: updates below 70% confidence still appear in feed but with "AI-suggested" label
+
+---
+
+### 3.2 Approval Request — Structured Approval Card (Option A)
+
+**Decision**: Approval requests surface as structured cards in the Actions tab with extracted details (amount, category, requester, project) displayed inline. Manager sees all decision-relevant data without expanding.
+
+#### Flow
+
+```
+Worker records voice note
+  -> AI classifies as intent: approval
+  -> AI extracts: category, estimated_amount, materials/items mentioned
+  -> Action item created with category = 'approval'
+  -> Structured Approval Card appears in Actions tab
+  -> Manager sees extracted details inline
+  -> Manager taps:
+     [APPROVE]           -> status = approved, records interaction
+     [APPROVE WITH NOTE] -> modal for condition text, then status = approved
+     [DENY]              -> mandatory reason (text or voice), status = denied
+```
+
+#### Structured Approval Card Layout
+
+```
++------------------------------------------------------+
+| ▓▓ APPROVAL REQUEST                         3h ago   |
+| ▓▓                                                   |
+| ▓▓ "Need to purchase 50 bags cement for Floor 3"     |
+| ▓▓                                                   |
+| ▓▓  Category:   Material Purchase                    |
+| ▓▓  Estimated:  [amount from AI extraction]          |
+| ▓▓  Requested:  Rajesh (Site Engineer)               |
+| ▓▓  Project:    Tower B, Floor 3                     |
+| ▓▓                                                   |
+| ▓▓ [APPROVE]  [APPROVE WITH NOTE]  [DENY]    [···]  |
++------------------------------------------------------+
+  Left border: 4px Warning Orange (0xFFFF9800)
+```
+
+#### UX Spec
+
+| Element | Spec |
+|---------|------|
+| Card border | 4px left, Warning Orange `0xFFFF9800` |
+| Category field | Pulled from `voice_note_approvals.approval_type` |
+| Estimated amount | Pulled from `voice_note_approvals.estimated_cost` or AI extraction; "Not specified" if absent |
+| APPROVE button | Solid green `0xFF4CAF50`, `Icons.check` |
+| APPROVE WITH NOTE | Outlined green, `Icons.check_circle_outline` |
+| DENY button | Outlined red `0xFFD32F2F`, `Icons.close` |
+| Deny reason | Required — modal with TextField + optional voice recording |
+| "APPROVE WITH NOTE" modal | TextField with hint: "Add condition (e.g., use brand X instead)" |
+| Confidence < 85% | Amber "AI-suggested" chip above extracted fields; shows raw transcript in expandable |
+| Overflow menu `[···]` | Priority, Escalate to Owner, Forward, Stakeholder Trail |
+
+#### Impact on Existing System
+
+- ActionCardWidget: new structured layout variant for `category == 'approval'`
+- New button: "APPROVE WITH NOTE" (currently only APPROVE exists)
+- Extracted data: read from `voice_note_approvals` and `voice_note_material_requests` tables
+- DENY: enforce mandatory reason (currently optional in some code paths)
+
+---
+
+### 3.3 Critical Condition — Red Alert Banner (Option A)
+
+**Decision**: Critical items (action_required + high/critical priority OR safety keyword detected at any confidence) get a persistent red banner at the top of the manager dashboard, above all tabs. Banner stays until the item is acted on.
+
+#### Flow
+
+```
+Worker records voice note about urgent site issue
+  -> AI classifies as action_required + priority high/critical
+     OR safety keywords detected at any confidence level
+  -> Action item created with is_critical_flag = true
+  -> RED ALERT BANNER appears at top of ManagerDashboard (above TabBar)
+  -> Banner persists across all tabs until acted on
+  -> Manager taps:
+     [VIEW]          -> Scrolls/navigates to the full action card in Actions tab
+     [INSTRUCT NOW]  -> Opens InstructVoiceDialog immediately
+  -> After first action taken, banner dismisses
+  -> Action item continues normal workflow in Actions tab
+```
+
+#### Red Alert Banner Layout
+
+```
++------------------------------------------------------+
+| [red bg]  CRITICAL: Water pipe burst on Floor 7      |
+|           reported 12m ago                            |
+|           [VIEW]  [INSTRUCT NOW]              [×]    |
++------------------------------------------------------+
+```
+
+#### UX Spec
+
+| Element | Spec |
+|---------|------|
+| Banner position | Fixed at top of ManagerDashboard scaffold, above TabBar |
+| Banner background | Gradient: `0xFFD32F2F` -> `0xFFB71C1C` (deep red) |
+| Banner text | White, 14sp bold for title, 12sp normal for timestamp |
+| Banner height | 72dp (compact, doesn't obscure too much content) |
+| VIEW button | Outlined white, navigates to action card |
+| INSTRUCT NOW button | Solid white with red text, opens InstructVoiceDialog |
+| Dismiss [x] | Only visible AFTER an action is taken (cannot dismiss without acting) |
+| Multiple criticals | Stack banners (max 3 visible, "+N more" for overflow) |
+| Time badge | Live-updating relative time ("12m ago", "2h ago") |
+| Animation | Slide-in from top on creation, subtle pulse every 30s if unacted |
+| Sound | System alert sound on first appearance (respects device silent mode) |
+| Notification | Push notification (type: `critical_detected`) sent to manager immediately |
+
+#### Impact on Existing System
+
+- ManagerDashboard: add banner overlay widget (both classic and kanban layouts)
+- Edge function: set `is_critical_flag = true` when conditions met
+- NotificationService: new `critical_detected` type with urgent priority
+- Actions tab: critical cards also appear in normal flow with red-amber gradient (banner is supplementary)
+
+---
+
+## 4. Message Card UI: Two-Tier Card (Option B)
+
+**Decision**: All action cards in the manager's Actions tab use a two-tier layout — collapsed for scanning, expanded for detail. Only one card can be expanded at a time (accordion behavior).
+
+### 4.1 Collapsed State (List View)
+
+The collapsed state shows everything the manager needs to decide whether to act or skip.
+
+```
++--+----------------------------------------+
+|▓▓| HIGH   APPROVAL              3h ago    |
+|▓▓| Purchase 50 bags cement — [amount]     |
+|▓▓| Rajesh · Tower B                       |
+|▓▓| [APPROVE] [INQUIRE] [DENY]      [···]  |
++--+----------------------------------------+
+```
+
+**Layout rules**:
+- Left color bar (4px): priority color (red = high, orange = med, green = low)
+- **Line 1**: Priority pill + Category pill + relative time (right-aligned)
+- **Line 2**: AI summary (truncated to 2 lines max, 15-word cap from AI)
+- **Line 3**: Sender avatar (24px circle) + sender name + project badge
+- **Line 4**: Primary action buttons (contextual per category) + overflow `[···]`
+
+### 4.2 Expanded State (On Tap)
+
+Tapping anywhere on the collapsed card (except buttons) expands to show full detail.
+
+```
++--+----------------------------------------+
+|▓▓| HIGH   APPROVAL              3h ago    |
+|▓▓| Purchase 50 bags cement — [amount]     |
+|▓▓| Rajesh · Tower B                       |
+|▓▓|                                        |
+|▓▓| [Audio Player: ▶ ━━━━━━━━━━ 1:23]     |
+|▓▓|                                        |
+|▓▓| Full transcription text here with all  |
+|▓▓| language sections and translations...  |
+|▓▓|                                        |
+|▓▓| AI Analysis:                           |
+|▓▓|  Category: Material Purchase           |
+|▓▓|  Estimated: [amount]                   |
+|▓▓|  Confidence: 78% [━━━━━━━━░░]         |
+|▓▓|                                        |
+|▓▓| Extracted Data:                        |
+|▓▓|  Materials: 50 bags cement (OPC 53)    |
+|▓▓|  Labor: —                              |
+|▓▓|                                        |
+|▓▓| [Proof photo thumbnail, if any]        |
+|▓▓|                                        |
+|▓▓| Stakeholder Trail (last 3):            |
+|▓▓|  · Created by Rajesh — 3h ago         |
+|▓▓|  · Forwarded to Suresh — 1h ago       |
+|▓▓|  [View full trail]                     |
+|▓▓|                                        |
+|▓▓| [APPROVE] [INQUIRE] [DENY]      [···]  |
++--+----------------------------------------+
+```
+
+**Expanded sections** (in order):
+1. Audio player (play/pause, seek bar, duration)
+2. Full transcription (with language badges and translations)
+3. AI analysis box (category, extracted amounts, confidence bar)
+4. Extracted data (materials, labor — from extraction tables)
+5. Proof photo thumbnail (if `proof_photo_url` exists, tap for full-size)
+6. Mini stakeholder trail (last 3 interactions inline, "View full trail" link)
+7. Action buttons (repeated at bottom for easy access)
+
+### 4.3 Category-Specific Collapsed Cards
+
+**Action Required**:
+```
++--+----------------------------------------+
+|▓▓| HIGH   ACTION REQUIRED       45m ago   |
+|▓▓| Rebar delivery delayed, need alternate  |
+|▓▓| Vikram · Site Alpha                     |
+|▓▓| [INSTRUCT] [FORWARD] [RESOLVE]  [···]  |
++--+----------------------------------------+
+  Left border: Error Red (0xFFD32F2F)
+```
+
+**Approval**:
+```
++--+----------------------------------------+
+|▓▓| MED    APPROVAL              3h ago    |
+|▓▓| Purchase 50 bags cement — [amount]     |
+|▓▓| Rajesh · Tower B                       |
+|▓▓| [APPROVE] [APPROVE+NOTE] [DENY] [···]  |
++--+----------------------------------------+
+  Left border: Warning Orange (0xFFFF9800)
+```
+
+**Needs Review** (medium/low confidence):
+```
++--+----------------------------------------+
+|░░| —      NEEDS REVIEW          1h ago    |
+|░░| [AI-suggested] Possible material req.  |
+|░░| Amit · Tower A                         |
+|░░| [CONFIRM] [EDIT] [DISMISS]      [···]  |
++--+----------------------------------------+
+  Left border: Grey (0xFFBDBDBD)
+  Background: Light amber (0xFFFFF8E1)
+```
+
+### 4.4 Accordion Behavior
+
+| Rule | Spec |
+|------|------|
+| Default state | All cards collapsed |
+| Expand trigger | Tap card body (not action buttons) |
+| Collapse trigger | Tap expanded card header, or tap a different card |
+| Max expanded | 1 at a time (expanding one collapses the previous) |
+| Animation | 200ms ease-in-out height transition |
+| Scroll behavior | Auto-scroll so expanded card's top aligns with viewport top |
+| Action buttons | Always visible in both states (collapsed bottom, expanded bottom) |
+
+### 4.5 Card Dimensions
+
+| Element | Collapsed | Expanded |
+|---------|-----------|----------|
+| Card height | ~96dp (4 lines) | Variable (content-dependent) |
+| Left border | 4px wide, full height | 4px wide, full height |
+| Card padding | 12dp horizontal, 8dp vertical | 16dp horizontal, 12dp vertical |
+| Card margin | 4dp bottom | 8dp bottom |
+| Card elevation | 1dp | 3dp (lifted feel when expanded) |
+| Card radius | 8dp | 8dp |
+
+### 4.6 UX Decisions (Finalized)
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Card model | Two-tier (collapsed/expanded) | Best density-to-detail ratio |
+| Accordion limit | 1 expanded at a time | Prevents scroll explosion |
+| Actions in collapsed | Yes (primary buttons visible) | Manager can act without expanding |
+| Actions in expanded | Repeated at bottom | Don't force scroll back up |
+| Confidence bar | Expanded state only (inside AI analysis box) | Keep collapsed state clean |
+| Sender avatar | 24px circle with initials | Adds human context without taking space |
+| Time display | Relative ("3h ago") in collapsed, absolute in expanded | Relative for scanning, absolute for audit |
+
+---
+
+## 5. Manager Actionable Inbox
+
+**Status**: Implemented (classic + kanban). Needs message type workflow integration + two-tier card.
+
+### 5.1 Inbox Layout (Finalized)
+
+**Classic view** (ActionsTab):
+```
+[Red Alert Banner — critical items, persistent above tabs]
+
+[Filter bar: Status | Priority | Category | Needs Review]
+  |
+  +-- Section: Approvals (orange header, pinned at top)
+  |     Structured Approval Cards (two-tier)
+  |     Badge: "3 pending approvals"
+  |
+  +-- Section: Action Required (red header)
+  |     Action cards (two-tier) with INSTRUCT/FORWARD/RESOLVE
+  |
+  +-- Section: Flagged for Review (grey header, collapsed by default)
+        Low-confidence items requiring manual triage
+        Badge: count of items
+```
+
+**Key change**: Updates section is REMOVED from Actions tab. Updates live in Feed tab only.
+
+**Kanban view** (ActionsKanbanTab):
+```
+Queue (pending) | Active (in_progress) | Verifying (proof) | Logs (completed)
+```
+- Kanban only shows approval + action_required items (no updates)
+- Two-tier cards apply in kanban columns too
+
+### 5.2 Section Ordering
+
+| Position | Section | Why |
+|---|---|---|
+| Banner (above tabs) | Critical alerts | Must be seen first, cannot be missed |
+| 1st section | Approvals | Financial/schedule decisions block work; FIFO order (oldest first) |
+| 2nd section | Action Required | Operational items needing delegation |
+| Collapsed | Flagged for Review | Low-confidence items; don't clutter main view |
+
+### 5.3 Action Buttons per Category
+
+| Category | Primary Buttons | Overflow Menu |
+|----------|----------------|---------------|
+| **approval** | APPROVE, APPROVE WITH NOTE, DENY | Priority, Escalate to Owner, Forward, Stakeholder Trail |
+| **action_required** | INSTRUCT, FORWARD, RESOLVE | Priority, Escalate to Owner, Stakeholder Trail |
+| **needs_review** | CONFIRM, EDIT, DISMISS | View Raw Transcript, Priority |
+
+### 5.4 Needs Review Flow
+
+When manager taps a `needs_review` card:
+
+```
+Card expands to show:
+  - AI-generated summary (amber background section)
+  - Raw transcript (white background, below summary)
+  - Audio player (replay original)
+  - Confidence score bar with percentage
+  - Three actions:
+    CONFIRM -> removes needs_review flag, enters standard workflow
+    EDIT    -> allows manager to rewrite summary, then confirms
+    DISMISS -> soft-delete (archived, not destroyed)
+```
+
+---
+
+## 6. Worker Voice Note Submission
 
 **Status**: Implemented (with modifications needed for validation gate)
 
-### 2.1 Flow
+### 6.1 Flow
 
 ```
 Worker opens My Logs tab
@@ -80,7 +487,7 @@ Worker opens My Logs tab
   -> Edge function completes -> card updates to: completed
 ```
 
-### 2.2 UX Decisions (Finalized)
+### 6.2 UX Decisions (Finalized)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -91,7 +498,7 @@ Worker opens My Logs tab
 | Duplicate prevention | Disable mic during upload | Prevent accidental double-submissions |
 | Error recovery | Toast with "Retry" action | Network failures common on-site |
 
-### 2.3 Validation Gate (Phase 1 Requirement)
+### 6.3 Validation Gate (Phase 1 Requirement)
 
 **Decision**: Workers get a one-time confirmation screen AFTER AI processing completes.
 
@@ -115,11 +522,11 @@ Voice note status: completed
 
 ---
 
-## 3. AI Processing Pipeline
+## 7. AI Processing Pipeline
 
 **Status**: Implemented in `supabase/Functions/transcribe-audio/index.ts`
 
-### 3.1 Pipeline Phases
+### 7.1 Pipeline Phases
 
 ```
 Phase 1: Fetch voice note record, validate not already processed
@@ -134,16 +541,30 @@ Phase 5: Structured data extraction
          -> Materials, labor, approvals, project events
          -> Each entity gets its own confidence_score
 Phase 6: Action item creation (if actionable)
-         -> Apply confidence routing (NEW - see section 1.2)
+         -> Apply confidence routing (see section 2.2)
 Phase 7: Update voice note status to completed
 ```
 
-### 3.2 Confidence Routing Logic (NEW)
+### 7.2 Confidence Routing Logic
 
 Add to Phase 6 of the edge function:
 
 ```
-IF intent == 'information' -> skip action item creation
+IF intent == 'update':
+  -> DO NOT create action_item (Ambient Updates decision — Section 3.1)
+  -> Voice note appears in Feed tab only
+  -> Skip to Phase 7
+
+IF intent == 'information':
+  -> DO NOT create action_item
+  -> Skip to Phase 7
+
+IF critical_keywords_detected (ANY confidence, ANY intent):
+  -> OVERRIDE: Create action_item with needs_review = true, priority = 'high'
+  -> Set is_critical_flag = true
+  -> Create notification for assigned manager immediately (type: critical_detected)
+  -> RED ALERT BANNER triggered on ManagerDashboard (Section 3.3)
+  -> Continue to confidence routing below
 
 IF confidence_score >= 0.85:
   -> Create action_item with needs_review = false
@@ -157,14 +578,11 @@ IF confidence_score < 0.70:
   -> Create action_item with needs_review = true
   -> Set review_status = 'flagged'
   -> Set status = 'pending' (do not auto-route)
-
-IF critical_keywords_detected (ANY confidence):
-  -> Create action_item with needs_review = true, priority = 'high'
-  -> Create notification for assigned manager immediately
-  -> Set is_critical_flag = true
 ```
 
-### 3.3 Critical Keywords List
+**Note**: Critical keyword detection takes precedence over the update/information skip. A voice note classified as "update" but containing "fire" or "collapse" WILL create an action item with critical flag.
+
+### 7.3 Critical Keywords List
 
 ```
 injury, injured, hurt, accident, collapse, collapsed, falling, fell,
@@ -174,87 +592,11 @@ emergency, unsafe, danger, dangerous, hazard, crack, structural
 
 ---
 
-## 4. Manager Actionable Inbox
-
-**Status**: Implemented (classic + kanban). Needs confidence tier integration.
-
-### 4.1 Inbox Layout (Finalized)
-
-**Classic view** (ActionsTab):
-```
-[Filter bar: Status | Priority | Category | Needs Review (NEW)]
-  |
-  +-- Section: Critical (red header, always expanded)
-  |     Action cards with red-amber gradient (safety items)
-  |
-  +-- Section: Action Required (red header)
-  |     Action cards with contextual buttons
-  |
-  +-- Section: Pending Approval (orange header)
-  |     Action cards with Approve/Inquire/Deny
-  |
-  +-- Section: Updates (green header)
-  |     Action cards with Ack/Note/Forward
-  |
-  +-- Section: Flagged for Review (grey header, collapsed by default)
-        Low-confidence items requiring manual triage
-        Badge: count of items
-```
-
-**Kanban view** (ActionsKanbanTab):
-```
-Queue (pending/validating) | Active (in_progress) | Verifying (proof) | Logs (completed)
-```
-
-### 4.2 Action Card UX (Finalized)
-
-Each action card shows:
-
-```
-+-----------------------------------------------------+
-| [Category badge]  [Priority dot]  [Confidence bar]  |
-|                                                      |
-| Short summary (bold, 15-word max)                    |
-| "AI-suggested" chip (if needs_review = true)         |
-|                                                      |
-| [Expand: full transcript + audio player]             |
-|                                                      |
-| [Primary actions: contextual per category]           |
-| [Secondary menu: priority, forward, escalate, trail] |
-+-----------------------------------------------------+
-```
-
-### 4.3 Category-Specific Action Buttons
-
-| Category | Primary Buttons | Secondary Actions |
-|----------|----------------|-------------------|
-| **action_required** | INSTRUCT, FORWARD, RESOLVE | Priority, Escalate, Stakeholder Trail |
-| **approval** | APPROVE, INQUIRE, DENY | Priority, Escalate, Stakeholder Trail |
-| **update** | ACK, ADD NOTE, FORWARD | Priority, Stakeholder Trail |
-| **needs_review** (new) | CONFIRM, EDIT, DISMISS | View Raw Transcript, Priority |
-
-### 4.4 Needs Review Flow (NEW)
-
-When manager taps a `needs_review` card:
-
-```
-Card expands to show:
-  - AI-generated summary (amber background)
-  - Raw transcript (white background, side-by-side)
-  - Audio player (replay original)
-  - Three actions:
-    CONFIRM -> removes needs_review flag, enters standard workflow
-    EDIT    -> allows manager to rewrite summary, then confirms
-    DISMISS -> soft-delete (archived, not destroyed)
-```
-
----
-
-## 5. Manager-to-Worker Instructions
+## 8. Manager-to-Worker Instructions
 
 **Status**: Implemented via InstructVoiceDialog
 
-### 5.1 Flow
+### 8.1 Flow
 
 ```
 Manager taps INSTRUCT on action card
@@ -273,7 +615,7 @@ Manager taps INSTRUCT on action card
   -> Dialog closes, card status updates
 ```
 
-### 5.2 UX Decisions (Finalized)
+### 8.2 UX Decisions (Finalized)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -286,11 +628,11 @@ Manager taps INSTRUCT on action card
 
 ---
 
-## 6. Worker Reply Flow
+## 9. Worker Reply Flow
 
 **Status**: Implemented via LogCard "RECORD REPLY" button
 
-### 6.1 Flow
+### 9.1 Flow
 
 ```
 Worker sees instruction in My Logs tab (threaded under original)
@@ -304,7 +646,7 @@ Worker sees instruction in My Logs tab (threaded under original)
   -> Action item remains in workflow (not auto-closed)
 ```
 
-### 6.2 UX Decisions (Finalized)
+### 9.2 UX Decisions (Finalized)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -316,11 +658,11 @@ Worker sees instruction in My Logs tab (threaded under original)
 
 ---
 
-## 7. Manager-to-Owner Escalation
+## 10. Manager-to-Owner Escalation
 
 **Status**: Implemented via secondary actions menu
 
-### 7.1 Flow
+### 10.1 Flow
 
 ```
 Manager taps secondary menu (burger icon) on action card
@@ -340,7 +682,7 @@ Manager taps secondary menu (burger icon) on action card
   -> Notification sent to owner (type: 'escalated_to_owner')
 ```
 
-### 7.2 Confidence Gate (NEW)
+### 10.2 Confidence Gate
 
 **Decision**: Escalations of medium-confidence items require manager confirmation.
 
@@ -354,7 +696,7 @@ IF action_item.needs_review = true AND not yet confirmed:
 
 This prevents unverified AI output from reaching the owner.
 
-### 7.3 UX Decisions (Finalized)
+### 10.3 UX Decisions (Finalized)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -366,11 +708,11 @@ This prevents unverified AI output from reaching the owner.
 
 ---
 
-## 8. Owner Response
+## 11. Owner Response
 
 **Status**: Implemented via OwnerApprovalsTab
 
-### 8.1 Flow
+### 11.1 Flow
 
 ```
 Owner opens Approvals tab
@@ -390,7 +732,7 @@ Owner opens Approvals tab
   -> Notification sent to manager (type: 'owner_approval_response')
 ```
 
-### 8.2 UX Decisions (Finalized)
+### 11.2 UX Decisions (Finalized)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -403,11 +745,11 @@ Owner opens Approvals tab
 
 ---
 
-## 9. Proof-of-Work Gate
+## 12. Proof-of-Work Gate
 
 **Status**: Implemented (DB trigger + partial UI)
 
-### 9.1 Flow
+### 12.1 Flow
 
 ```
 Action item with category = action_required
@@ -426,7 +768,7 @@ Action item with category = action_required
   -> Interaction recorded for each step
 ```
 
-### 9.2 DB Enforcement
+### 12.2 DB Enforcement
 
 ```sql
 -- Trigger: enforce_proof_gate()
@@ -436,7 +778,7 @@ IF NEW.status = 'completed'
 THEN RAISE EXCEPTION 'Cannot complete: proof required'
 ```
 
-### 9.3 UX Decisions (Finalized)
+### 12.3 UX Decisions (Finalized)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -450,11 +792,11 @@ THEN RAISE EXCEPTION 'Cannot complete: proof required'
 
 ---
 
-## 10. Notification & Delivery System
+## 13. Notification & Delivery System
 
 **Status**: Implemented (realtime via Supabase). Gaps in owner notifications.
 
-### 10.1 Notification Types
+### 13.1 Notification Types
 
 | Type | Sender | Recipient | Trigger | Priority |
 |------|--------|-----------|---------|----------|
@@ -469,7 +811,7 @@ THEN RAISE EXCEPTION 'Cannot complete: proof required'
 | `critical_detected` (NEW) | System | Manager | Safety keyword at any confidence | Urgent |
 | `review_needed` (NEW) | System | Manager | Medium-confidence item created | Normal |
 
-### 10.2 Delivery Mechanisms
+### 13.2 Delivery Mechanisms
 
 | Channel | Status | Notes |
 |---------|--------|-------|
@@ -479,7 +821,7 @@ THEN RAISE EXCEPTION 'Cannot complete: proof required'
 | Push notification (web) | Not implemented | Phase 2 priority |
 | Email digest | Not implemented | Phase 3 |
 
-### 10.3 Read Receipt Flow
+### 13.3 Read Receipt Flow
 
 ```
 Notification created -> badge count increments (realtime)
@@ -489,7 +831,7 @@ Notification created -> badge count increments (realtime)
   -> is_read = true, read_at = timestamp
 ```
 
-### 10.4 UX Decisions (Finalized)
+### 13.4 UX Decisions (Finalized)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -502,7 +844,7 @@ Notification created -> badge count increments (realtime)
 
 ---
 
-## 11. Validation Gates Summary
+## 14. Validation Gates Summary
 
 All gates that block or require user action before proceeding:
 
@@ -518,9 +860,9 @@ All gates that block or require user action before proceeding:
 
 ---
 
-## 12. Visual Design System
+## 15. Visual Design System
 
-### 12.1 Color Palette
+### 15.1 Color Palette
 
 | Token | Hex | Usage |
 |-------|-----|-------|
@@ -535,7 +877,7 @@ All gates that block or require user action before proceeding:
 | Text Secondary | `0xFF757575` | Captions, timestamps |
 | Surface | `0xFFFFFFFF` | Card backgrounds |
 
-### 12.2 Confidence-Specific Colors (NEW)
+### 15.2 Confidence-Specific Colors
 
 | Band | Border | Background | Badge |
 |------|--------|------------|-------|
@@ -544,7 +886,26 @@ All gates that block or require user action before proceeding:
 | LOW (<70%) | 4px left grey `0xFFBDBDBD` | `0xFFF5F5F5` (light grey) | "Flagged" grey chip |
 | CRITICAL | 4px left red gradient | `0xFFFFF3E0` (light orange-red) | "CRITICAL" red chip, pulsing |
 
-### 12.3 Status Badge Colors
+### 15.3 Red Alert Banner Colors
+
+| Element | Spec |
+|---------|------|
+| Banner background | Gradient: `0xFFD32F2F` -> `0xFFB71C1C` |
+| Banner text | White `0xFFFFFFFF`, 14sp bold title, 12sp normal subtitle |
+| VIEW button | Outlined white border, white text |
+| INSTRUCT NOW button | Solid white `0xFFFFFFFF` bg, red `0xFFD32F2F` text |
+| Banner height | 72dp |
+| Banner animation | Slide-in from top, subtle pulse every 30s if unacted |
+
+### 15.4 Two-Tier Card Colors
+
+| State | Elevation | Background | Border |
+|-------|-----------|------------|--------|
+| Collapsed | 1dp | White `0xFFFFFFFF` | 4px left = priority color |
+| Expanded | 3dp | White `0xFFFFFFFF` | 4px left = priority color |
+| Needs Review (collapsed) | 1dp | Light amber `0xFFFFF8E1` | 4px left grey `0xFFBDBDBD` |
+
+### 15.5 Status Badge Colors
 
 | Status | Background | Text |
 |--------|-----------|------|
@@ -555,7 +916,7 @@ All gates that block or require user action before proceeding:
 | needs_review | `0xFFFFF8E1` | `0xFFFF9800` |
 | flagged | `0xFFFCE4EC` | `0xFFD32F2F` |
 
-### 12.4 Category Badge Colors
+### 15.6 Category Badge Colors
 
 | Category | Color | Icon |
 |----------|-------|------|
@@ -564,7 +925,7 @@ All gates that block or require user action before proceeding:
 | update | Success Green | `Icons.info_outline` |
 | critical | Error Red + pulse | `Icons.warning` |
 
-### 12.5 Priority Indicators
+### 15.7 Priority Indicators
 
 | Priority | Color | Icon |
 |----------|-------|------|
@@ -572,7 +933,7 @@ All gates that block or require user action before proceeding:
 | med | Warning Orange | `Icons.remove` |
 | low | Success Green | `Icons.low_priority` |
 
-### 12.6 Typography
+### 15.8 Typography
 
 - Card title: 16sp, `FontWeight.w600`, Primary text color
 - Card body: 14sp, `FontWeight.w400`, Primary text color
@@ -582,9 +943,9 @@ All gates that block or require user action before proceeding:
 
 ---
 
-## 13. Data Model Requirements
+## 16. Data Model Requirements
 
-### 13.1 New Fields on `action_items` (for confidence routing)
+### 16.1 New Fields on `action_items` (for confidence routing)
 
 ```sql
 ALTER TABLE action_items ADD COLUMN IF NOT EXISTS
@@ -607,7 +968,7 @@ ALTER TABLE action_items ADD COLUMN IF NOT EXISTS
   is_critical_flag boolean DEFAULT false;
 ```
 
-### 13.2 Existing Tables (No Changes Needed)
+### 16.2 Existing Tables (No Changes Needed)
 
 | Table | Role in Workflows |
 |-------|-------------------|
@@ -620,7 +981,7 @@ ALTER TABLE action_items ADD COLUMN IF NOT EXISTS
 | `voice_note_forwards` | Forward tracking |
 | `finance_transactions` | Spending verification |
 
-### 13.3 Indexes Required
+### 16.3 Indexes Required
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_action_items_needs_review
@@ -635,9 +996,9 @@ CREATE INDEX IF NOT EXISTS idx_action_items_is_critical
 
 ---
 
-## 14. State Machines
+## 17. State Machines
 
-### 14.1 Voice Note Lifecycle
+### 17.1 Voice Note Lifecycle
 
 ```
 recording -> uploading -> processing -> completed -> (validated | rejected)
@@ -645,10 +1006,12 @@ recording -> uploading -> processing -> completed -> (validated | rejected)
                                            +-> failed (on error)
 ```
 
-### 14.2 Action Item Lifecycle
+### 17.2 Action Item Lifecycle
+
+**Note**: Updates do NOT enter this lifecycle (Ambient Updates — Feed only).
 
 ```
-                         +-> completed (ACK, direct resolve)
+                         +-> completed (direct resolve)
                          |
 pending -> in_progress -> verifying -> completed (verified)
    |           |              |
@@ -656,13 +1019,37 @@ pending -> in_progress -> verifying -> completed (verified)
    |           |
    |           +-> completed (no proof required)
    |
-   +-> pending_review (if needs_review = true, NEW)
+   +-> pending_review (if needs_review = true)
           |
           +-> confirmed -> (re-enters standard flow as pending)
           +-> dismissed -> (archived)
 ```
 
-### 14.3 Owner Approval Lifecycle
+### 17.5 Update (Ambient) Lifecycle
+
+```
+Voice note classified as 'update'
+  -> Appears in Feed tab (no action_item created)
+  -> Manager ACKs in feed -> green checkmark overlay
+  -> OR Manager taps "Create Action" -> promoted to action_item
+     -> Enters Action Item Lifecycle above at 'pending'
+  -> Unacknowledged after 7 days -> auto-archived
+```
+
+### 17.6 Critical Condition Lifecycle
+
+```
+Voice note triggers critical flag (safety keywords OR high priority)
+  -> Action item created with is_critical_flag = true
+  -> RED ALERT BANNER appears on ManagerDashboard
+  -> Banner persists until first action taken:
+     [VIEW]          -> Navigates to card in Actions tab
+     [INSTRUCT NOW]  -> Opens InstructVoiceDialog directly
+  -> After action: banner dismisses, item continues normal lifecycle
+  -> If unacknowledged after 5 min: push notification re-sent
+```
+
+### 17.3 Owner Approval Lifecycle
 
 ```
 pending -> approved
@@ -670,7 +1057,7 @@ pending -> approved
         -> deferred -> pending (re-opened)
 ```
 
-### 14.4 Validation Gate Lifecycle
+### 17.4 Validation Gate Lifecycle
 
 ```
 pending_validation -> validated (worker confirms)
@@ -679,16 +1066,20 @@ pending_validation -> validated (worker confirms)
 
 ---
 
-## 15. Current State vs. Target State
+## 18. Current State vs. Target State
 
 | Feature | Current State | Target State | Priority |
 |---------|--------------|-------------|----------|
 | Voice recording + upload | Done | Done | - |
 | ASR transcription | Done (3 providers) | Done | - |
 | AI classification | Done | Add confidence routing | P0 |
-| Action item creation | Done | Add needs_review, confidence_score | P0 |
-| Manager inbox (classic) | Done | Add confidence tier UI, review flow | P0 |
-| Manager inbox (kanban) | Done | Add confidence indicators | P1 |
+| Action item creation | Done (creates for all intents) | Skip creation for updates (Ambient); add needs_review, confidence_score | P0 |
+| **Ambient Updates (Feed-only)** | Updates create action_items | Updates appear in Feed tab only; ACK/NOTE inline; "Create Action" promotion | P0 |
+| **Structured Approval Card** | Basic approval card | Structured layout with extracted amounts, category, APPROVE WITH NOTE | P0 |
+| **Red Alert Banner** | Critical items mixed in actions list | Persistent red banner above tabs on ManagerDashboard | P0 |
+| **Two-Tier Card UI** | Single expandable card | Collapsed (4-line) + Expanded (full detail) with accordion | P0 |
+| Manager inbox (classic) | Done | Remove Updates section; pin Approvals; add Flagged for Review | P0 |
+| Manager inbox (kanban) | Done | Filter to approval + action_required only; add two-tier cards | P1 |
 | INSTRUCT flow | Done | Done | - |
 | FORWARD flow | Done | Done | - |
 | Worker reply | Done | Done | - |
@@ -696,18 +1087,19 @@ pending_validation -> validated (worker confirms)
 | Owner response | Done | Add push notification to manager | P1 |
 | Proof-of-work gate | Done (DB + partial UI) | Complete UI wiring | P1 |
 | Validation gate | DB schema done | Build Flutter UI (banner on card) | P1 |
-| Notification system | Done (in-app) | Add push notifications, critical alerts | P1 |
+| Notification system | Done (in-app) | Add push notifications, critical_detected type | P1 |
 | Transcription edit lock | Done (one-edit) | Done | - |
 | Edit history JSONB | Schema done | Wire Flutter append logic | P2 |
 | Stakeholder trail | Done | Done | - |
 | transcript_raw immutability | Schema done | Update edge function to write it | P2 |
-| Critical keyword detection | Not started | Add to edge function Phase 4 | P0 |
+| Critical keyword detection | Not started | Add to edge function + trigger is_critical_flag | P0 |
 | Geofence attendance | Done | Done | - |
-| Confidence bar widget | Not started | Build reusable widget | P0 |
+| Confidence bar widget | Not started | Build reusable widget (expanded state only) | P0 |
+| Feed tab ACK/NOTE buttons | Not available on feed cards | Add inline ACK, ADD NOTE, CREATE ACTION buttons on VoiceNoteCard | P0 |
 
 ---
 
-## 16. Open Questions
+## 19. Open Questions
 
 | # | Question | Options | Decision | Date |
 |---|----------|---------|----------|------|
