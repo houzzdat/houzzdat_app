@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-/// Daily Tasks tab — shows tasks assigned to the worker.
-/// Mark as Finished: strike-through title, reduce opacity, toggle to Reopen.
+/// Daily Tasks tab — shows tasks assigned to the current worker.
+/// Fetches manager name via user_id join.
 class DailyTasksTab extends StatefulWidget {
   final String accountId;
+  final String userId;
 
-  const DailyTasksTab({super.key, required this.accountId});
+  const DailyTasksTab({super.key, required this.accountId, required this.userId});
 
   @override
   State<DailyTasksTab> createState() => _DailyTasksTabState();
@@ -28,13 +29,12 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
   Future<void> _loadTasks() async {
     setState(() => _isLoading = true);
     try {
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) return;
-
+      // Fetch tasks assigned to this worker, with the creating user's name
       final data = await _supabase
           .from('action_items')
-          .select('id, summary, status, category, assigned_to, created_at')
+          .select('id, summary, status, category, user_id, voice_note_id, created_at, users!action_items_user_id_fkey(full_name, email)')
           .eq('account_id', widget.accountId)
+          .eq('assigned_to', widget.userId)
           .order('created_at', ascending: false);
 
       if (mounted) {
@@ -42,7 +42,6 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
 
-        // Pre-mark completed ones
         final completed = tasks
             .where((t) => t['status'] == 'completed')
             .map((t) => t['id'].toString())
@@ -60,32 +59,57 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
     }
   }
 
-  void _toggleFinished(String taskId) {
+  Future<void> _toggleFinished(String taskId) async {
+    final wasFinished = _finishedIds.contains(taskId);
     setState(() {
-      if (_finishedIds.contains(taskId)) {
+      if (wasFinished) {
         _finishedIds.remove(taskId);
       } else {
         _finishedIds.add(taskId);
       }
     });
 
-    // Update status on backend
-    final newStatus = _finishedIds.contains(taskId) ? 'completed' : 'pending';
-    _supabase.from('action_items').update({
-      'status': newStatus,
-    }).eq('id', taskId).then((_) {}).catchError((e) {
+    final newStatus = _finishedIds.contains(taskId) ? 'completed' : 'in_progress';
+    try {
+      final updateData = <String, dynamic>{'status': newStatus};
+      if (newStatus == 'completed') {
+        updateData['completed_at'] = DateTime.now().toIso8601String();
+      }
+      await _supabase.from('action_items').update(updateData).eq('id', taskId);
+    } catch (e) {
       debugPrint('Error updating task: $e');
-    });
+      // Revert on failure
+      if (mounted) {
+        setState(() {
+          if (wasFinished) {
+            _finishedIds.add(taskId);
+          } else {
+            _finishedIds.remove(taskId);
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update task')),
+        );
+      }
+    }
   }
 
-  IconData _getTaskTypeIcon(String? category) {
+  IconData _getTaskTypeIcon(String? category, bool hasVoiceNote) {
+    if (hasVoiceNote) return LucideIcons.mic;
     switch (category) {
-      case 'voice':
-      case 'audio':
-        return LucideIcons.mic;
-      default:
-        return LucideIcons.fileText;
+      case 'action_required': return LucideIcons.alertTriangle;
+      case 'approval': return LucideIcons.checkSquare;
+      case 'update': return LucideIcons.info;
+      default: return LucideIcons.fileText;
     }
+  }
+
+  String _getManagerName(Map<String, dynamic> task) {
+    final userMap = task['users'];
+    if (userMap is Map) {
+      return userMap['full_name']?.toString() ?? userMap['email']?.toString() ?? '';
+    }
+    return '';
   }
 
   @override
@@ -124,8 +148,9 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
           final taskId = task['id'].toString();
           final isFinished = _finishedIds.contains(taskId);
           final title = task['summary'] ?? 'Untitled Task';
-          final manager = task['assigned_to'] ?? '';
+          final managerName = _getManagerName(task);
           final category = task['category']?.toString();
+          final hasVoiceNote = task['voice_note_id'] != null;
 
           return AnimatedContainer(
             duration: const Duration(milliseconds: 300),
@@ -152,7 +177,7 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Icon(
-                          _getTaskTypeIcon(category),
+                          _getTaskTypeIcon(category, hasVoiceNote),
                           size: 20,
                           color: isFinished
                               ? Colors.grey.shade400
@@ -161,7 +186,7 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
                       ),
                       const SizedBox(width: 14),
 
-                      // Task title + manager
+                      // Task title + manager name
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -180,10 +205,10 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
                                 decorationColor: Colors.grey.shade400,
                               ),
                             ),
-                            if (manager.isNotEmpty) ...[
+                            if (managerName.isNotEmpty) ...[
                               const SizedBox(height: 4),
                               Text(
-                                manager,
+                                managerName,
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: Colors.grey.shade500,

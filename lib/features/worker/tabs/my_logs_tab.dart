@@ -4,12 +4,18 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'package:houzzdat_app/features/worker/widgets/log_card.dart';
 
-/// My Logs tab — displays the worker's voice notes with LogCard.
-/// Includes a record button hero and a realtime-fed list.
+/// My Logs tab — displays only the current worker's voice notes.
 class MyLogsTab extends StatefulWidget {
   final String accountId;
+  final String userId;
+  final String? projectId;
 
-  const MyLogsTab({super.key, required this.accountId});
+  const MyLogsTab({
+    super.key,
+    required this.accountId,
+    required this.userId,
+    this.projectId,
+  });
 
   @override
   State<MyLogsTab> createState() => _MyLogsTabState();
@@ -43,33 +49,21 @@ class _MyLogsTabState extends State<MyLogsTab> {
 
       try {
         final audioBytes = await _recorderService.stopRecording();
-        if (audioBytes != null) {
-          final user = _supabase.auth.currentUser;
-          if (user != null) {
-            final userData = await _supabase
-                .from('users')
-                .select('current_project_id')
-                .eq('id', user.id)
-                .single();
+        if (audioBytes != null && widget.projectId != null) {
+          await _recorderService.uploadAudio(
+            bytes: audioBytes,
+            projectId: widget.projectId!,
+            userId: widget.userId,
+            accountId: widget.accountId,
+          );
 
-            final projectId = userData['current_project_id'];
-            if (projectId != null) {
-              await _recorderService.uploadAudio(
-                bytes: audioBytes,
-                projectId: projectId,
-                userId: user.id,
-                accountId: widget.accountId,
-              );
-
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Voice note submitted!'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-            }
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Voice note submitted!'),
+                backgroundColor: Colors.green,
+              ),
+            );
           }
         }
       } catch (e) {
@@ -84,44 +78,36 @@ class _MyLogsTabState extends State<MyLogsTab> {
     }
   }
 
-  /// Parses a voice_note map into the fields LogCard expects.
   _LogData _parseNote(Map<String, dynamic> note) {
-    final transcription = note['transcript_final'] ??
+    // Use dedicated transcript fields from the schema
+    final englishTranscript = note['transcript_en_current'] ??
+        note['transcript_final'] ??
         note['transcription'] ??
-        note['transcript_en_current'] ??
         '';
+    final rawTranscript = note['transcript_raw_current'] ??
+        note['transcript_raw'] ??
+        '';
+    final languageCode = note['detected_language_code'] ??
+        note['detected_language'] ??
+        'EN';
 
-    String englishText = transcription;
+    String englishText = englishTranscript;
     String originalText = '';
-    String languageCode = 'EN';
     String? translatedText;
 
-    // Try to parse language markers: [Language] text\n\n[English] translation
-    final pattern = RegExp(
-      r'\[(.*?)\]\s*(.*?)(?:\n\n\[English\]\s*(.*))?$',
-      dotAll: true,
-    );
-    final match = pattern.firstMatch(transcription);
+    // If the detected language is not English, use raw as original
+    final isEnglish = languageCode.toString().toLowerCase() == 'en' ||
+        languageCode.toString().toLowerCase() == 'english';
 
-    if (match != null) {
-      languageCode = match.group(1) ?? 'EN';
-      originalText = (match.group(2) ?? '').trim();
-      final enText = (match.group(3) ?? '').trim();
-
-      if (languageCode.toLowerCase() == 'english' ||
-          languageCode.toLowerCase() == 'en') {
-        englishText = originalText;
-        originalText = '';
-      } else {
-        englishText = enText.isNotEmpty ? enText : originalText;
-        translatedText = enText.isNotEmpty ? enText : null;
-      }
+    if (!isEnglish && rawTranscript.isNotEmpty) {
+      originalText = rawTranscript;
+      translatedText = englishTranscript;
     }
 
     return _LogData(
       englishText: englishText,
       originalText: originalText,
-      languageCode: languageCode,
+      languageCode: languageCode.toString(),
       translatedText: translatedText,
     );
   }
@@ -177,13 +163,13 @@ class _MyLogsTabState extends State<MyLogsTab> {
 
         const SizedBox(height: 4),
 
-        // Logs list
+        // Logs list — filtered to current worker only
         Expanded(
           child: StreamBuilder<List<Map<String, dynamic>>>(
             stream: _supabase
                 .from('voice_notes')
                 .stream(primaryKey: ['id'])
-                .eq('account_id', widget.accountId)
+                .eq('user_id', widget.userId)
                 .order('created_at', ascending: false),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -217,7 +203,25 @@ class _MyLogsTabState extends State<MyLogsTab> {
                 );
               }
 
-              final notes = snapshot.data!;
+              // Filter out threaded replies (parent_id != null) from the top-level list
+              final notes = snapshot.data!
+                  .where((n) => n['parent_id'] == null)
+                  .toList();
+
+              if (notes.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(LucideIcons.micOff, size: 56, color: Colors.grey.shade300),
+                      const SizedBox(height: 12),
+                      Text('No voice notes yet',
+                        style: TextStyle(color: Colors.grey.shade500, fontSize: 15)),
+                    ],
+                  ),
+                );
+              }
+
               return RefreshIndicator(
                 onRefresh: () async => setState(() {}),
                 child: ListView.builder(
@@ -233,6 +237,9 @@ class _MyLogsTabState extends State<MyLogsTab> {
                       languageCode: parsed.languageCode,
                       audioUrl: note['audio_url'] ?? '',
                       translatedText: parsed.translatedText,
+                      accountId: widget.accountId,
+                      userId: widget.userId,
+                      projectId: widget.projectId,
                     );
                   },
                 ),

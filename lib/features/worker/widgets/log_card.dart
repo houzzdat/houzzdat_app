@@ -6,8 +6,7 @@ import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 /// LogCard widget for the My Logs tab.
 /// - Play button in top-right triggers expand + audio playback.
 /// - Tapping the card body only expands/collapses text.
-/// - Collapsed: English text on top, original language below with badge.
-/// - Expanded: Audio scrubber, Record Reply button, Translation section.
+/// - Record Reply uploads audio as a threaded voice_note with parent_id.
 class LogCard extends StatefulWidget {
   final String id;
   final String englishText;
@@ -15,7 +14,9 @@ class LogCard extends StatefulWidget {
   final String languageCode;
   final String audioUrl;
   final String? translatedText;
-  final VoidCallback? onReplyRecorded;
+  final String? accountId;
+  final String? userId;
+  final String? projectId;
 
   const LogCard({
     super.key,
@@ -25,7 +26,9 @@ class LogCard extends StatefulWidget {
     required this.languageCode,
     required this.audioUrl,
     this.translatedText,
-    this.onReplyRecorded,
+    this.accountId,
+    this.userId,
+    this.projectId,
   });
 
   @override
@@ -36,6 +39,7 @@ class _LogCardState extends State<LogCard> {
   bool _isTextExpanded = false;
   bool _isAudioExpanded = false;
   bool _isReplying = false;
+  bool _isUploadingReply = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
   final AudioRecorderService _recorderService = AudioRecorderService();
   Duration _duration = Duration.zero;
@@ -80,12 +84,54 @@ class _LogCardState extends State<LogCard> {
 
   Future<void> _handleReplyTap() async {
     if (_isReplying) {
-      setState(() => _isReplying = false);
-      await _recorderService.stopRecording();
-      widget.onReplyRecorded?.call();
+      // Stop recording and upload as reply
+      setState(() {
+        _isReplying = false;
+        _isUploadingReply = true;
+      });
+
+      try {
+        final audioBytes = await _recorderService.stopRecording();
+        if (audioBytes != null &&
+            widget.projectId != null &&
+            widget.userId != null &&
+            widget.accountId != null) {
+          await _recorderService.uploadAudio(
+            bytes: audioBytes,
+            projectId: widget.projectId!,
+            userId: widget.userId!,
+            accountId: widget.accountId!,
+            parentId: widget.id,
+          );
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Reply sent!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to send reply: $e')),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isUploadingReply = false);
+      }
     } else {
       final hasPermission = await _recorderService.checkPermission();
-      if (!hasPermission) return;
+      if (!hasPermission) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission required')),
+          );
+        }
+        return;
+      }
       await _recorderService.startRecording();
       setState(() => _isReplying = true);
     }
@@ -233,6 +279,7 @@ class _LogCardState extends State<LogCard> {
             children: [
               Text(_formatDuration(_position),
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+              const SizedBox(width: 8),
               Expanded(
                 child: LinearProgressIndicator(
                   value: _duration.inMilliseconds > 0
@@ -243,6 +290,7 @@ class _LogCardState extends State<LogCard> {
                   minHeight: 4,
                 ),
               ),
+              const SizedBox(width: 8),
               Text(_formatDuration(_duration),
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
             ],
@@ -253,25 +301,36 @@ class _LogCardState extends State<LogCard> {
           // Record Reply button
           SizedBox(
             width: double.infinity,
-            child: OutlinedButton.icon(
-              icon: Icon(
-                _isReplying ? LucideIcons.square : LucideIcons.mic,
-                size: 16,
-              ),
-              label: Text(_isReplying ? 'STOP & SEND REPLY' : 'RECORD REPLY'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _isReplying
-                    ? Colors.red
-                    : const Color(0xFF1A237E),
-                side: BorderSide(
-                  color: _isReplying
-                      ? Colors.red
-                      : const Color(0xFF1A237E),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              onPressed: _handleReplyTap,
-            ),
+            child: _isUploadingReply
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  )
+                : OutlinedButton.icon(
+                    icon: Icon(
+                      _isReplying ? LucideIcons.square : LucideIcons.mic,
+                      size: 16,
+                    ),
+                    label: Text(_isReplying ? 'STOP & SEND REPLY' : 'RECORD REPLY'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _isReplying
+                          ? Colors.red
+                          : const Color(0xFF1A237E),
+                      side: BorderSide(
+                        color: _isReplying
+                            ? Colors.red
+                            : const Color(0xFF1A237E),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onPressed: _handleReplyTap,
+                  ),
           ),
 
           // Translation section (if non-English and has translation)
@@ -279,9 +338,9 @@ class _LogCardState extends State<LogCard> {
             const SizedBox(height: 14),
             Container(
               width: double.infinity,
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 border: Border(
-                  left: BorderSide(color: const Color(0xFFFFCA28), width: 3),
+                  left: BorderSide(color: Color(0xFFFFCA28), width: 3),
                 ),
               ),
               padding: const EdgeInsets.only(left: 12),

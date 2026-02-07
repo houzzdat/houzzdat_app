@@ -20,6 +20,8 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   final _supabase = Supabase.instance.client;
 
   String? _accountId;
+  String? _projectId;
+  String? _userId;
   bool _isInitializing = true;
   int _currentIndex = 0;
 
@@ -35,12 +37,14 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
       if (user != null) {
         final userData = await _supabase
             .from('users')
-            .select('account_id')
+            .select('account_id, current_project_id')
             .eq('id', user.id)
             .single();
         if (mounted) {
           setState(() {
             _accountId = userData['account_id']?.toString();
+            _projectId = userData['current_project_id']?.toString();
+            _userId = user.id;
             _isInitializing = false;
           });
         }
@@ -66,9 +70,9 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
     }
 
     final tabs = [
-      MyLogsTab(accountId: _accountId!),
-      DailyTasksTab(accountId: _accountId!),
-      const AttendanceTab(),
+      MyLogsTab(accountId: _accountId!, userId: _userId!, projectId: _projectId),
+      DailyTasksTab(accountId: _accountId!, userId: _userId!),
+      AttendanceTab(accountId: _accountId!, userId: _userId!, projectId: _projectId),
     ];
 
     final titles = ['MY LOGS', 'DAILY TASKS', 'ATTENDANCE'];

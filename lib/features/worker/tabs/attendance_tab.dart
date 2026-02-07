@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
@@ -6,42 +7,112 @@ import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 enum AttendanceStatus { checkedOut, checkedIn }
 enum ReportType { voice, text }
 
-class AttendanceEntry {
-  final DateTime checkInTime;
-  final DateTime checkOutTime;
-  final ReportType reportType;
-
-  AttendanceEntry({
-    required this.checkInTime,
-    required this.checkOutTime,
-    required this.reportType,
-  });
-}
-
 /// Attendance tab — check-in, daily report (checkout), and history.
-/// Implements a mock GeoFence check: if isInsideSite is false,
-/// the Mark Attendance button is disabled with a 'Not on Site' warning.
+/// All data persisted to the Supabase `attendance` table.
 class AttendanceTab extends StatefulWidget {
-  const AttendanceTab({super.key});
+  final String accountId;
+  final String userId;
+  final String? projectId;
+
+  const AttendanceTab({
+    super.key,
+    required this.accountId,
+    required this.userId,
+    this.projectId,
+  });
 
   @override
   State<AttendanceTab> createState() => _AttendanceTabState();
 }
 
 class _AttendanceTabState extends State<AttendanceTab> {
-  AttendanceStatus _status = AttendanceStatus.checkedOut;
-  DateTime? _checkInTime;
-  final List<AttendanceEntry> _history = [];
-  final AudioRecorderService _recorderService = AudioRecorderService();
+  final _supabase = Supabase.instance.client;
+  final _recorderService = AudioRecorderService();
 
-  // Mock geofence — in production, this would come from location services
+  AttendanceStatus _status = AttendanceStatus.checkedOut;
+  String? _activeAttendanceId;
+  DateTime? _checkInTime;
+  List<Map<String, dynamic>> _history = [];
+  bool _isLoading = true;
+
+  // Mock geofence
   bool _isInsideSite = true;
 
-  void _handleCheckIn() {
-    setState(() {
-      _status = AttendanceStatus.checkedIn;
-      _checkInTime = DateTime.now();
-    });
+  @override
+  void initState() {
+    super.initState();
+    _loadAttendance();
+  }
+
+  Future<void> _loadAttendance() async {
+    setState(() => _isLoading = true);
+    try {
+      // Check for an open session (checked in but not out)
+      final openSession = await _supabase
+          .from('attendance')
+          .select()
+          .eq('user_id', widget.userId)
+          .isFilter('check_out_at', null)
+          .order('check_in_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (openSession != null) {
+        _status = AttendanceStatus.checkedIn;
+        _activeAttendanceId = openSession['id'].toString();
+        _checkInTime = DateTime.parse(openSession['check_in_at']);
+      } else {
+        _status = AttendanceStatus.checkedOut;
+        _activeAttendanceId = null;
+        _checkInTime = null;
+      }
+
+      // Load completed sessions for history
+      final historyData = await _supabase
+          .from('attendance')
+          .select()
+          .eq('user_id', widget.userId)
+          .not('check_out_at', 'is', null)
+          .order('check_in_at', ascending: false)
+          .limit(30);
+
+      if (mounted) {
+        setState(() {
+          _history = (historyData as List)
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading attendance: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _handleCheckIn() async {
+    try {
+      final result = await _supabase.from('attendance').insert({
+        'user_id': widget.userId,
+        'account_id': widget.accountId,
+        'project_id': widget.projectId,
+        'check_in_at': DateTime.now().toIso8601String(),
+      }).select().single();
+
+      if (mounted) {
+        setState(() {
+          _status = AttendanceStatus.checkedIn;
+          _activeAttendanceId = result['id'].toString();
+          _checkInTime = DateTime.parse(result['check_in_at']);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Check-in failed: $e')),
+        );
+      }
+    }
   }
 
   void _handleSendDailyReport() {
@@ -51,29 +122,45 @@ class _AttendanceTabState extends State<AttendanceTab> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => _DailyReportSheet(
+      builder: (sheetContext) => _DailyReportSheet(
         recorderService: _recorderService,
-        onReportSent: (reportType) {
-          Navigator.pop(context);
-          setState(() {
-            _history.insert(
-              0,
-              AttendanceEntry(
-                checkInTime: _checkInTime!,
-                checkOutTime: DateTime.now(),
-                reportType: reportType,
-              ),
-            );
-            _status = AttendanceStatus.checkedOut;
-            _checkInTime = null;
-          });
+        accountId: widget.accountId,
+        userId: widget.userId,
+        projectId: widget.projectId,
+        onReportSent: (reportType, {String? reportText, String? voiceNoteId}) async {
+          Navigator.pop(sheetContext);
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Daily report sent! You are checked out.'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          try {
+            await _supabase.from('attendance').update({
+              'check_out_at': DateTime.now().toIso8601String(),
+              'report_type': reportType == ReportType.voice ? 'voice' : 'text',
+              'report_text': reportText,
+              'report_voice_note_id': voiceNoteId,
+            }).eq('id', _activeAttendanceId!);
+
+            if (mounted) {
+              setState(() {
+                _status = AttendanceStatus.checkedOut;
+                _activeAttendanceId = null;
+                _checkInTime = null;
+              });
+
+              _loadAttendance();
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Daily report sent! You are checked out.'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Failed to check out: $e')),
+              );
+            }
+          }
         },
       ),
     );
@@ -92,34 +179,34 @@ class _AttendanceTabState extends State<AttendanceTab> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // Status card
-        _buildStatusCard(),
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF1A237E)),
+      );
+    }
 
-        const SizedBox(height: 24),
-
-        // GeoFence toggle (mock — for demo/testing)
-        _buildGeofenceToggle(),
-
-        const SizedBox(height: 24),
-
-        // History header
-        if (_history.isNotEmpty) ...[
-          Text('HISTORY',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade500,
-              letterSpacing: 1,
-            )),
-          const SizedBox(height: 12),
-
-          // History cards
-          ..._history.map((entry) => _buildHistoryCard(entry)),
+    return RefreshIndicator(
+      onRefresh: _loadAttendance,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildStatusCard(),
+          const SizedBox(height: 24),
+          _buildGeofenceToggle(),
+          const SizedBox(height: 24),
+          if (_history.isNotEmpty) ...[
+            Text('HISTORY',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade500,
+                letterSpacing: 1,
+              )),
+            const SizedBox(height: 12),
+            ..._history.map((entry) => _buildHistoryCard(entry)),
+          ],
         ],
-      ],
+      ),
     );
   }
 
@@ -141,7 +228,6 @@ class _AttendanceTabState extends State<AttendanceTab> {
                   : const Color(0xFF1A237E),
             ),
             const SizedBox(height: 12),
-
             Text(
               _status == AttendanceStatus.checkedIn
                   ? 'You are ON SITE'
@@ -154,7 +240,6 @@ class _AttendanceTabState extends State<AttendanceTab> {
                     : const Color(0xFF424242),
               ),
             ),
-
             if (_status == AttendanceStatus.checkedIn && _checkInTime != null) ...[
               const SizedBox(height: 6),
               Text(
@@ -162,10 +247,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                 style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
               ),
             ],
-
             const SizedBox(height: 20),
-
-            // Action button
             if (_status == AttendanceStatus.checkedOut) ...[
               SizedBox(
                 width: double.infinity,
@@ -180,8 +262,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                     disabledBackgroundColor: Colors.grey.shade300,
                     disabledForegroundColor: Colors.grey.shade500,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+                      borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: _isInsideSite ? _handleCheckIn : null,
                 ),
@@ -210,8 +291,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                     backgroundColor: const Color(0xFFFFCA28),
                     foregroundColor: Colors.black,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+                      borderRadius: BorderRadius.circular(12)),
                     elevation: 4,
                   ),
                   onPressed: _handleSendDailyReport,
@@ -244,7 +324,12 @@ class _AttendanceTabState extends State<AttendanceTab> {
     );
   }
 
-  Widget _buildHistoryCard(AttendanceEntry entry) {
+  Widget _buildHistoryCard(Map<String, dynamic> entry) {
+    final checkIn = DateTime.parse(entry['check_in_at']);
+    final checkOut = DateTime.parse(entry['check_out_at']);
+    final reportType = entry['report_type'];
+    final isVoice = reportType == 'voice';
+
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -256,17 +341,15 @@ class _AttendanceTabState extends State<AttendanceTab> {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: entry.reportType == ReportType.voice
+                color: isVoice
                     ? const Color(0xFFE8EAF6)
                     : const Color(0xFFFFF8E1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(
-                entry.reportType == ReportType.voice
-                    ? LucideIcons.volume2
-                    : LucideIcons.edit3,
+                isVoice ? LucideIcons.volume2 : LucideIcons.edit3,
                 size: 20,
-                color: entry.reportType == ReportType.voice
+                color: isVoice
                     ? const Color(0xFF1A237E)
                     : const Color(0xFFFFCA28),
               ),
@@ -277,22 +360,19 @@ class _AttendanceTabState extends State<AttendanceTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _formatDate(entry.checkInTime),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
+                    _formatDate(checkIn),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${_formatTime(entry.checkInTime)} — ${_formatTime(entry.checkOutTime)}',
+                    '${_formatTime(checkIn)} — ${_formatTime(checkOut)}',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                   ),
                 ],
               ),
             ),
             Text(
-              entry.reportType == ReportType.voice ? 'Voice' : 'Text',
+              isVoice ? 'Voice' : 'Text',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
@@ -309,10 +389,16 @@ class _AttendanceTabState extends State<AttendanceTab> {
 /// Bottom sheet for sending a daily report — voice or text.
 class _DailyReportSheet extends StatefulWidget {
   final AudioRecorderService recorderService;
-  final Function(ReportType) onReportSent;
+  final String accountId;
+  final String userId;
+  final String? projectId;
+  final Function(ReportType, {String? reportText, String? voiceNoteId}) onReportSent;
 
   const _DailyReportSheet({
     required this.recorderService,
+    required this.accountId,
+    required this.userId,
+    this.projectId,
     required this.onReportSent,
   });
 
@@ -322,6 +408,7 @@ class _DailyReportSheet extends StatefulWidget {
 
 class _DailyReportSheetState extends State<_DailyReportSheet> {
   bool _isRecording = false;
+  bool _isSending = false;
   final _textController = TextEditingController();
   bool _showTextInput = false;
 
@@ -333,9 +420,45 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
 
   Future<void> _handleVoiceReport() async {
     if (_isRecording) {
-      await widget.recorderService.stopRecording();
-      setState(() => _isRecording = false);
-      widget.onReportSent(ReportType.voice);
+      setState(() {
+        _isRecording = false;
+        _isSending = true;
+      });
+
+      try {
+        final audioBytes = await widget.recorderService.stopRecording();
+        if (audioBytes != null && widget.projectId != null) {
+          final url = await widget.recorderService.uploadAudio(
+            bytes: audioBytes,
+            projectId: widget.projectId!,
+            userId: widget.userId,
+            accountId: widget.accountId,
+          );
+
+          String? voiceNoteId;
+          if (url != null) {
+            try {
+              final note = await Supabase.instance.client
+                  .from('voice_notes')
+                  .select('id')
+                  .eq('audio_url', url)
+                  .single();
+              voiceNoteId = note['id']?.toString();
+            } catch (_) {}
+          }
+
+          widget.onReportSent(ReportType.voice, voiceNoteId: voiceNoteId);
+        } else {
+          setState(() => _isSending = false);
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isSending = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to upload: $e')),
+          );
+        }
+      }
     } else {
       final hasPermission = await widget.recorderService.checkPermission();
       if (!hasPermission) return;
@@ -346,7 +469,7 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
 
   void _handleTextReport() {
     if (_textController.text.trim().isEmpty) return;
-    widget.onReportSent(ReportType.text);
+    widget.onReportSent(ReportType.text, reportText: _textController.text.trim());
   }
 
   @override
@@ -371,36 +494,36 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
           const SizedBox(height: 4),
           Text('Record a voice note or type your report',
             style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-
           const SizedBox(height: 24),
 
-          // Voice record button
           SizedBox(
             width: double.infinity,
             height: 52,
             child: ElevatedButton.icon(
-              icon: Icon(
-                _isRecording ? LucideIcons.square : LucideIcons.mic,
-                size: 20,
-              ),
+              icon: _isSending
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : Icon(_isRecording ? LucideIcons.square : LucideIcons.mic, size: 20),
               label: Text(
-                _isRecording ? 'STOP & SEND VOICE REPORT' : 'RECORD VOICE REPORT',
+                _isSending
+                    ? 'SENDING...'
+                    : _isRecording
+                        ? 'STOP & SEND VOICE REPORT'
+                        : 'RECORD VOICE REPORT',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _isRecording ? Colors.red : const Color(0xFF1A237E),
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              onPressed: _handleVoiceReport,
+              onPressed: _isSending ? null : _handleVoiceReport,
             ),
           ),
 
           const SizedBox(height: 16),
 
-          // Divider with OR
           Row(
             children: [
               Expanded(child: Divider(color: Colors.grey.shade300)),
@@ -415,7 +538,6 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
 
           const SizedBox(height: 16),
 
-          // Text report toggle
           if (!_showTextInput)
             SizedBox(
               width: double.infinity,
@@ -427,9 +549,7 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF1A237E),
                   side: const BorderSide(color: Color(0xFF1A237E)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () => setState(() => _showTextInput = true),
               ),
@@ -440,9 +560,7 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
               maxLines: 4,
               decoration: InputDecoration(
                 hintText: 'Type your daily report...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: Color(0xFF1A237E), width: 2),
@@ -460,9 +578,7 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFFFCA28),
                   foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: _handleTextReport,
               ),
