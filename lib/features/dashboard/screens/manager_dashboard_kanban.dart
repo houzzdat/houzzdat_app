@@ -9,6 +9,7 @@ import 'package:houzzdat_app/features/dashboard/tabs/feed_tab.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/logout_dialog.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/custom_bottom_nav.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/layout_toggle_button.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/critical_alert_banner.dart';
 
 class ManagerDashboardKanban extends StatefulWidget {
   const ManagerDashboardKanban({super.key});
@@ -163,9 +164,21 @@ class _ManagerDashboardKanbanState extends State<ManagerDashboardKanban> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _currentIndex,
-        children: tabs,
+      body: Column(
+        children: [
+          CriticalAlertBanner(
+            accountId: _accountId!,
+            onViewActions: () {
+              setState(() => _currentIndex = 0);
+            },
+          ),
+          Expanded(
+            child: IndexedStack(
+              index: _currentIndex,
+              children: tabs,
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: CustomBottomNav(
         currentIndex: _currentIndex,

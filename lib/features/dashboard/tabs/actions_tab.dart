@@ -23,6 +23,7 @@ class _ActionsTabState extends State<ActionsTab> {
   String _filterCategory = 'all';
   String _sortBy = 'newest';
   String _searchQuery = '';
+  String? _expandedCardId;
 
   @override
   void initState() {
@@ -74,10 +75,21 @@ class _ActionsTabState extends State<ActionsTab> {
 
   List<Map<String, dynamic>> get _filteredAndSortedActions {
     var result = _actions.where((action) {
+      // Updates are now ambient-only (Feed tab) — exclude from Actions
+      if (action['category'] == 'update') return false;
+
       final statusMatch = _filterStatus == 'all' ||
           action['status'] == _filterStatus;
-      final categoryMatch = _filterCategory == 'all' ||
-          action['category'] == _filterCategory;
+
+      // Support 'needs_review' as a virtual category filter
+      final bool categoryMatch;
+      if (_filterCategory == 'needs_review') {
+        categoryMatch = action['needs_review'] == true &&
+            action['review_status'] != 'confirmed';
+      } else {
+        categoryMatch = _filterCategory == 'all' ||
+            action['category'] == _filterCategory;
+      }
 
       // Search filter
       bool searchMatch = true;
@@ -200,7 +212,7 @@ class _ActionsTabState extends State<ActionsTab> {
                     ('all', 'All'),
                     ('approval', 'Approval'),
                     ('action_required', 'Action Required'),
-                    ('update', 'Update'),
+                    ('needs_review', 'Needs Review'),
                   ],
                   (value) => setState(() => _filterCategory = value),
                 ),
@@ -347,6 +359,9 @@ class _ActionsTabState extends State<ActionsTab> {
                           return ActionCardWidget(
                             item: filteredActions[index],
                             onRefresh: _loadActions,
+                            expandedCardId: _expandedCardId,
+                            onExpandChanged: (id) =>
+                                setState(() => _expandedCardId = id),
                           );
                         },
                       ),
