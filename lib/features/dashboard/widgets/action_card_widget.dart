@@ -1097,6 +1097,29 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
 
   // ─── Surface Actions ──────────────────────────────────────────
 
+  // Compact outlined button matching the design mockup (text-only, no icon)
+  Widget _actionBtn(String label, Color color, VoidCallback onPressed) {
+    return Expanded(
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: color,
+          side: BorderSide(color: color.withValues(alpha: 0.5)),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          minimumSize: const Size(0, 32),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
   List<Widget> _getSurfaceActions() {
     final status = widget.item['status'] ?? 'pending';
     final category = widget.item['category'];
@@ -1104,53 +1127,20 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     // Verification phase
     if (status == 'verifying') {
       return [
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.check_circle, size: 16),
-            label: const Text('VERIFY', style: TextStyle(fontSize: 11)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.successGreen,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            ),
-            onPressed: _handleCompleteAndLog,
-          ),
-        ),
-        const SizedBox(width: AppTheme.spacingXS),
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.cancel, size: 16),
-            label: const Text('REJECT', style: TextStyle(fontSize: 11)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.errorRed,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            ),
-            onPressed: () async {
-              await _recordInteraction('proof_rejected', 'Proof rejected, sent back to in_progress');
-              await _updateStatus('in_progress');
-              widget.onRefresh();
-            },
-          ),
-        ),
+        _actionBtn('VERIFY', AppTheme.successGreen, _handleCompleteAndLog),
+        const SizedBox(width: 6),
+        _actionBtn('REJECT', AppTheme.errorRed, () async {
+          await _recordInteraction('proof_rejected', 'Proof rejected, sent back to in_progress');
+          await _updateStatus('in_progress');
+          widget.onRefresh();
+        }),
       ];
     }
 
     // In progress with assignment — proof upload
     if (status == 'in_progress' && widget.item['assigned_to'] != null) {
       return [
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.camera_alt, size: 16),
-            label: const Text('UPLOAD PROOF', style: TextStyle(fontSize: 11)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.infoBlue,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            ),
-            onPressed: _handleProofUpload,
-          ),
-        ),
+        _actionBtn('UPLOAD PROOF', AppTheme.infoBlue, _handleProofUpload),
       ];
     }
 
@@ -1159,128 +1149,29 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       switch (category) {
         case 'approval':
           return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.check_circle, size: 16),
-                label: const Text('APPROVE', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleApprove,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingXS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.note_add, size: 16),
-                label: const Text('WITH NOTE', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.infoBlue,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleApproveWithNote,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingXS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.cancel, size: 16),
-                label: const Text('DENY', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.errorRed,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleDeny,
-              ),
-            ),
+            _actionBtn('APPROVE', AppTheme.successGreen, _handleApprove),
+            const SizedBox(width: 6),
+            _actionBtn('WITH NOTE', AppTheme.infoBlue, _handleApproveWithNote),
+            const SizedBox(width: 6),
+            _actionBtn('DENY', AppTheme.errorRed, _handleDeny),
           ];
 
         case 'action_required':
           return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.mic, size: 16),
-                label: const Text('INSTRUCT', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.infoBlue,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleInstruct,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingXS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.forward, size: 16),
-                label: const Text('FORWARD', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.warningOrange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleForward,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingXS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.done_all, size: 16),
-                label: const Text('RESOLVE', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleResolve,
-              ),
-            ),
+            _actionBtn('INSTRUCT', AppTheme.infoBlue, _handleInstruct),
+            const SizedBox(width: 6),
+            _actionBtn('FORWARD', AppTheme.warningOrange, _handleForward),
+            const SizedBox(width: 6),
+            _actionBtn('RESOLVE', AppTheme.successGreen, _handleResolve),
           ];
 
         case 'update':
           return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.check, size: 16),
-                label: const Text('ACK', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleAcknowledge,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingXS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.note_add, size: 16),
-                label: const Text('ADD NOTE', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.infoBlue,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleAddNote,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingXS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.forward, size: 16),
-                label: const Text('FORWARD', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.warningOrange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                onPressed: _handleForward,
-              ),
-            ),
+            _actionBtn('ACK', AppTheme.successGreen, _handleAcknowledge),
+            const SizedBox(width: 6),
+            _actionBtn('ADD NOTE', AppTheme.infoBlue, _handleAddNote),
+            const SizedBox(width: 6),
+            _actionBtn('FORWARD', AppTheme.warningOrange, _handleForward),
           ];
 
         default:
@@ -1294,44 +1185,11 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
   /// Review actions for AI-suggested items (Step 3E)
   List<Widget> _getReviewActions() {
     return [
-      Expanded(
-        child: ElevatedButton.icon(
-          icon: const Icon(Icons.check, size: 16),
-          label: const Text('CONFIRM', style: TextStyle(fontSize: 11)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.successGreen,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          ),
-          onPressed: _handleConfirmReview,
-        ),
-      ),
-      const SizedBox(width: AppTheme.spacingXS),
-      Expanded(
-        child: ElevatedButton.icon(
-          icon: const Icon(Icons.edit, size: 16),
-          label: const Text('EDIT', style: TextStyle(fontSize: 11)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.infoBlue,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          ),
-          onPressed: _handleEditSummary,
-        ),
-      ),
-      const SizedBox(width: AppTheme.spacingXS),
-      Expanded(
-        child: ElevatedButton.icon(
-          icon: const Icon(Icons.close, size: 16),
-          label: const Text('DISMISS', style: TextStyle(fontSize: 11)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.textSecondary,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          ),
-          onPressed: _handleDismissReview,
-        ),
-      ),
+      _actionBtn('CONFIRM', AppTheme.successGreen, _handleConfirmReview),
+      const SizedBox(width: 6),
+      _actionBtn('EDIT', AppTheme.infoBlue, _handleEditSummary),
+      const SizedBox(width: 6),
+      _actionBtn('DISMISS', AppTheme.textSecondary, _handleDismissReview),
     ];
   }
 
@@ -1355,24 +1213,43 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 8, 0),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Line 1: Priority Pill + Category Pill + badges + time
+          // Line 1: Priority dot + label, Category pill, badges, time
           Row(
             children: [
-              CategoryBadge(
-                text: (widget.item['priority'] ?? 'MED').toString().toUpperCase(),
-                color: _getPriorityColor(),
+              // Priority: colored dot + text
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: _getPriorityColor(),
+                  shape: BoxShape.circle,
+                ),
               ),
-              const SizedBox(width: AppTheme.spacingXS),
-              CategoryBadge(
-                text: _getCategoryLabel(),
-                color: _getCategoryColor(),
+              const SizedBox(width: 6),
+              Text(
+                (widget.item['priority'] ?? 'MED').toString().toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: _getPriorityColor(),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Category: colored text
+              Text(
+                _getCategoryLabel(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: _getCategoryColor(),
+                ),
               ),
               if (isCritical) ...[
-                const SizedBox(width: AppTheme.spacingXS),
+                const SizedBox(width: 8),
                 const CategoryBadge(
                   text: 'CRITICAL',
                   color: AppTheme.errorRed,
@@ -1380,7 +1257,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
                 ),
               ],
               if (needsReview) ...[
-                const SizedBox(width: AppTheme.spacingXS),
+                const SizedBox(width: 8),
                 const CategoryBadge(
                   text: 'AI-SUGGESTED',
                   color: Color(0xFF9E9E9E),
@@ -1391,7 +1268,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
               Text(_getRelativeTime(), style: AppTheme.caption),
             ],
           ),
-          const SizedBox(height: AppTheme.spacingS),
+          const SizedBox(height: 6),
           // Line 2: AI summary (2 lines max)
           Text(
             summaryText,
@@ -1399,7 +1276,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
             overflow: TextOverflow.ellipsis,
             style: AppTheme.bodyMedium.copyWith(fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: AppTheme.spacingS),
+          const SizedBox(height: 6),
           // Line 3: Avatar + Sender + Project + Status
           Row(
             children: [
@@ -1434,7 +1311,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
                 ),
             ],
           ),
-          const SizedBox(height: AppTheme.spacingS),
+          const SizedBox(height: 6),
         ],
       ),
     );
@@ -1473,13 +1350,13 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       child: Row(
         children: [
           ...actions,
-          const SizedBox(width: 2),
+          const SizedBox(width: 4),
           InkWell(
             onTap: _showSecondaryActions,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(16),
             child: const Padding(
-              padding: EdgeInsets.all(8),
-              child: Icon(Icons.more_vert, size: 20, color: AppTheme.textSecondary),
+              padding: EdgeInsets.all(6),
+              child: Icon(Icons.more_horiz, size: 20, color: AppTheme.textSecondary),
             ),
           ),
         ],
