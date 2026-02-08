@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
+import 'package:houzzdat_app/core/services/company_context_service.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/actions_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/projects_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/team_tab.dart';
@@ -20,6 +21,7 @@ class ManagerDashboardClassic extends StatefulWidget {
 class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
   final _supabase = Supabase.instance.client;
   final _recorderService = AudioRecorderService();
+  final _companyService = CompanyContextService();
 
   String? _accountId;
   int _currentIndex = 0;
@@ -29,9 +31,32 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
   void initState() {
     super.initState();
     _initializeManager();
+    _companyService.addListener(_onCompanyChanged);
+  }
+
+  @override
+  void dispose() {
+    _companyService.removeListener(_onCompanyChanged);
+    super.dispose();
+  }
+
+  void _onCompanyChanged() {
+    if (mounted && _companyService.activeAccountId != _accountId) {
+      setState(() => _accountId = _companyService.activeAccountId);
+    }
   }
 
   Future<void> _initializeManager() async {
+    // Use CompanyContextService (already initialized by AuthWrapper)
+    final companyService = CompanyContextService();
+    if (companyService.isInitialized && companyService.activeAccountId != null) {
+      if (mounted) {
+        setState(() => _accountId = companyService.activeAccountId);
+      }
+      return;
+    }
+
+    // Fallback: legacy approach
     final user = _supabase.auth.currentUser;
     if (user != null) {
       final data = await _supabase.from('users').select('account_id').eq('id', user.id).single();
@@ -47,8 +72,18 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
     );
 
     if (confirm == true) {
+      await CompanyContextService().reset();
       await _supabase.auth.signOut();
     }
+  }
+
+  void _handleSwitchCompany() {
+    // Navigate back to AuthWrapper which will show the company selector
+    CompanyContextService().reset().then((_) {
+      if (mounted) {
+        Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
+      }
+    });
   }
 
   Future<void> _handleCentralMicTap() async {
@@ -134,6 +169,12 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
+          if (_companyService.hasMultipleCompanies)
+            IconButton(
+              icon: const Icon(Icons.swap_horiz),
+              onPressed: _handleSwitchCompany,
+              tooltip: 'Switch Company',
+            ),
           const LayoutToggleButton(),
           IconButton(
             icon: const Icon(Icons.logout),

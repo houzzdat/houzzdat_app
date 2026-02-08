@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:houzzdat_app/core/services/company_context_service.dart';
 import 'package:houzzdat_app/features/worker/tabs/my_logs_tab.dart';
 import 'package:houzzdat_app/features/worker/tabs/daily_tasks_tab.dart';
 import 'package:houzzdat_app/features/worker/tabs/attendance_tab.dart';
@@ -33,6 +34,30 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
 
   Future<void> _fetchInitialData() async {
     try {
+      // Use CompanyContextService if available
+      final companyService = CompanyContextService();
+      if (companyService.isInitialized && companyService.activeAccountId != null) {
+        final user = _supabase.auth.currentUser;
+        if (user != null) {
+          // Still need project_id from users table
+          final userData = await _supabase
+              .from('users')
+              .select('current_project_id')
+              .eq('id', user.id)
+              .single();
+          if (mounted) {
+            setState(() {
+              _accountId = companyService.activeAccountId;
+              _projectId = userData['current_project_id']?.toString();
+              _userId = user.id;
+              _isInitializing = false;
+            });
+          }
+          return;
+        }
+      }
+
+      // Fallback: legacy approach
       final user = _supabase.auth.currentUser;
       if (user != null) {
         final userData = await _supabase
@@ -55,6 +80,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen> {
   }
 
   Future<void> _handleLogout() async {
+    await CompanyContextService().reset();
     await _supabase.auth.signOut();
   }
 

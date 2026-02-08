@@ -127,11 +127,12 @@ class AudioRecorderService {
   }) async {
     try {
       const ext = kIsWeb ? 'webm' : 'm4a';
+      const contentType = kIsWeb ? 'audio/webm' : 'audio/mp4';
       final path = 'log_${DateTime.now().millisecondsSinceEpoch}.$ext';
-      
-      // Upload to storage
+
+      // Upload to storage with correct MIME type
       await _supabase.storage.from('voice-notes').uploadBinary(
-        path, bytes, fileOptions: const FileOptions(contentType: 'audio/$ext', upsert: true)
+        path, bytes, fileOptions: const FileOptions(contentType: contentType, upsert: true)
       );
       
       final String url = _supabase.storage.from('voice-notes').getPublicUrl(path);

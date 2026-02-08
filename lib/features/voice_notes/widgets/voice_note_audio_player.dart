@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
@@ -102,6 +103,25 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
         });
       }
     });
+
+    // CRITICAL: Listen for async playback errors (network, codec, 404, CORS).
+    // audioplayers fires errors on this stream, NOT as thrown exceptions.
+    // Without this listener, failures are completely silent.
+    _audioPlayer.onLog.listen((String message) {
+      debugPrint('AudioPlayer log: $message');
+      // Detect error messages from the native player
+      if (message.toLowerCase().contains('error') ||
+          message.toLowerCase().contains('failed') ||
+          message.toLowerCase().contains('unable')) {
+        if (mounted && _isPlaying) {
+          setState(() {
+            _hasError = true;
+            _errorMessage = 'Audio playback failed. Tap retry.';
+            _isPlaying = false;
+          });
+        }
+      }
+    });
   }
 
   /// Toggle play/pause
@@ -119,28 +139,29 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
         setState(() => _isPlaying = false);
       } else {
         // Start or resume playback
-        if (_playerState == PlayerState.completed) {
-          // Restart from beginning if completed
-          await _audioPlayer.play(UrlSource(widget.audioUrl));
-        } else if (_playerState == PlayerState.paused) {
+        setState(() => _isPlaying = true);
+
+        if (_playerState == PlayerState.paused) {
           // Resume from current position
           await _audioPlayer.resume();
         } else {
-          // Start fresh playback
-          await _audioPlayer.play(UrlSource(widget.audioUrl));
+          // Start fresh playback (or restart if completed)
+          debugPrint('Playing audio: ${widget.audioUrl}');
+          await _audioPlayer.play(UrlSource(widget.audioUrl))
+              .timeout(const Duration(seconds: 15), onTimeout: () {
+            throw TimeoutException('Audio took too long to load');
+          });
         }
-        setState(() => _isPlaying = true);
       }
     } catch (e) {
       debugPrint('Playback error: $e');
-      
-      setState(() {
-        _hasError = true;
-        _errorMessage = 'Failed to play audio';
-        _isPlaying = false;
-      });
 
       if (mounted) {
+        setState(() {
+          _hasError = true;
+          _errorMessage = 'Failed to play audio: ${e is TimeoutException ? "Network timeout" : "Check connection"}';
+          _isPlaying = false;
+        });
         _showErrorSnackbar();
       }
     }

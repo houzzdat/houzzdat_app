@@ -384,32 +384,29 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 [functions.transcribe-audio]
 enabled = true
 verify_jwt = true
-import_map = "./functions/transcribe-audio/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-entrypoint = "./functions/transcribe-audio/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/transcribe-audio/*.html" ]
+import_map = "./Functions/transcribe-audio/deno.json"
+entrypoint = "./Functions/transcribe-audio/index.ts"
 
 [functions.create-account-admin]
 enabled = true
 verify_jwt = true
-import_map = "./functions/create-account-admin/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-entrypoint = "./functions/create-account-admin/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/create-account-admin/*.html" ]
+import_map = "./Functions/create-account-admin/deno.json"
+entrypoint = "./Functions/create-account-admin/index.ts"
 
 [functions.invite-user]
 enabled = true
 verify_jwt = true
-import_map = "./functions/invite-user/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-entrypoint = "./functions/invite-user/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/invite-user/*.html" ]
+import_map = "./Functions/invite-user/deno.json"
+entrypoint = "./Functions/invite-user/index.ts"
+
+[functions.manage-user-status]
+enabled = true
+verify_jwt = true
+import_map = "./Functions/manage-user-status/deno.json"
+entrypoint = "./Functions/manage-user-status/index.ts"
+
+[functions.manage-company-status]
+enabled = true
+verify_jwt = true
+import_map = "./Functions/manage-company-status/deno.json"
+entrypoint = "./Functions/manage-company-status/index.ts"

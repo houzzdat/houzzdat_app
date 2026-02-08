@@ -1,10 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
+import 'package:houzzdat_app/core/theme/app_theme.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/worker/widgets/log_card.dart';
 
-/// My Logs tab — displays only the current worker's voice notes.
+/// My Logs tab — displays only the current worker's voice notes
+/// with enriched data (recipient names, action items, manager responses).
 class MyLogsTab extends StatefulWidget {
   final String accountId;
   final String userId;
@@ -26,6 +30,95 @@ class _MyLogsTabState extends State<MyLogsTab> {
   final _recorderService = AudioRecorderService();
   bool _isRecording = false;
   bool _isUploading = false;
+  bool _isLoading = true;
+  String? _errorMessage;
+  List<Map<String, dynamic>> _enrichedNotes = [];
+
+  // Timer to refresh relative timestamps & delete button visibility
+  Timer? _refreshTimer;
+
+  // Realtime subscription for progressive voice note updates
+  RealtimeChannel? _voiceNotesChannel;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotes();
+    _subscribeToRealtimeUpdates();
+    // Refresh every 30 seconds for timestamp updates and delete countdown
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _voiceNotesChannel?.unsubscribe();
+    super.dispose();
+  }
+
+  /// Subscribe to Realtime changes on voice_notes for this worker.
+  /// When the Edge Function writes progressive status updates
+  /// (processing → transcribed → translated → completed),
+  /// this fires and we patch the in-memory data instantly.
+  void _subscribeToRealtimeUpdates() {
+    _voiceNotesChannel = _supabase
+        .channel('my-logs-${widget.userId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'voice_notes',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: widget.userId,
+          ),
+          callback: (payload) {
+            final updatedNote = payload.newRecord;
+            final noteId = updatedNote['id']?.toString();
+            if (noteId == null || !mounted) return;
+
+            // Patch the matching note in-memory — no full reload needed
+            setState(() {
+              final idx = _enrichedNotes.indexWhere(
+                (n) => n['id']?.toString() == noteId,
+              );
+              if (idx != -1) {
+                // Merge the updated fields into the enriched note,
+                // preserving enrichment (recipient_name, action_item, etc.)
+                _enrichedNotes[idx] = {
+                  ..._enrichedNotes[idx],
+                  ...updatedNote,
+                };
+              } else {
+                // New note we don't have yet — full reload to get enrichment
+                _loadNotes();
+              }
+            });
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'voice_notes',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: widget.userId,
+          ),
+          callback: (payload) {
+            // New voice note inserted — reload to get full enrichment
+            if (mounted) _loadNotes();
+          },
+        )
+        .subscribe();
+  }
+
+  // ─── Recording Logic (unchanged) ────────────────────────────
 
   Future<void> _handleRecording() async {
     final hasPermission = await _recorderService.checkPermission();
@@ -39,6 +132,18 @@ class _MyLogsTabState extends State<MyLogsTab> {
     }
 
     if (!_isRecording) {
+      // Check project assignment before starting recording
+      if (widget.projectId == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No project assigned. Please contact your manager.'),
+              backgroundColor: AppTheme.warningOrange,
+            ),
+          );
+        }
+        return;
+      }
       await _recorderService.startRecording();
       setState(() => _isRecording = true);
     } else {
@@ -61,12 +166,15 @@ class _MyLogsTabState extends State<MyLogsTab> {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('Voice note submitted!'),
-                backgroundColor: Colors.green,
+                backgroundColor: AppTheme.successGreen,
               ),
             );
+            // Refresh to show new note
+            _loadNotes();
           }
         }
       } catch (e) {
+        debugPrint('MyLogsTab: Recording error: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error: $e')),
@@ -78,45 +186,180 @@ class _MyLogsTabState extends State<MyLogsTab> {
     }
   }
 
-  _LogData _parseNote(Map<String, dynamic> note) {
-    // Use dedicated transcript fields from the schema
-    final englishTranscript = note['transcript_en_current'] ??
-        note['transcript_final'] ??
-        note['transcription'] ??
-        '';
-    final rawTranscript = note['transcript_raw_current'] ??
-        note['transcript_raw'] ??
-        '';
-    final languageCode = note['detected_language_code'] ??
-        note['detected_language'] ??
-        'EN';
+  // ─── Data Loading & Enrichment ──────────────────────────────
 
-    String englishText = englishTranscript;
-    String originalText = '';
-    String? translatedText;
+  Future<void> _loadNotes() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = _enrichedNotes.isEmpty;
+      _errorMessage = null;
+    });
 
-    // If the detected language is not English, use raw as original
-    final isEnglish = languageCode.toString().toLowerCase() == 'en' ||
-        languageCode.toString().toLowerCase() == 'english';
+    try {
+      // 1. Fetch voice notes for this worker (top-level only)
+      //    Filter by both user_id AND account_id for multi-company correctness
+      final notes = await _supabase
+          .from('voice_notes')
+          .select()
+          .eq('user_id', widget.userId)
+          .eq('account_id', widget.accountId)
+          .isFilter('parent_id', null)
+          .order('created_at', ascending: false);
 
-    if (!isEnglish && rawTranscript.isNotEmpty) {
-      originalText = rawTranscript;
-      translatedText = englishTranscript;
+      final notesList = List<Map<String, dynamic>>.from(notes);
+
+      if (notesList.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _enrichedNotes = [];
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+
+      // 2. Collect IDs for batch queries
+      final noteIds = notesList
+          .map((n) => n['id']?.toString())
+          .where((id) => id != null)
+          .cast<String>()
+          .toList();
+
+      final recipientIds = notesList
+          .map((n) => n['recipient_id']?.toString())
+          .where((id) => id != null && id.isNotEmpty)
+          .cast<String>()
+          .toSet()
+          .toList();
+
+      // 3. Batch fetch action items linked to these voice notes
+      Map<String, Map<String, dynamic>> actionItemsByVoiceNote = {};
+      if (noteIds.isNotEmpty) {
+        try {
+          final actionItems = await _supabase
+              .from('action_items')
+              .select(
+                  'id, voice_note_id, status, summary, assigned_to, interaction_history, created_at')
+              .inFilter('voice_note_id', noteIds);
+
+          for (final ai in actionItems) {
+            final vnId = ai['voice_note_id']?.toString();
+            if (vnId != null) {
+              actionItemsByVoiceNote[vnId] = Map<String, dynamic>.from(ai);
+            }
+          }
+        } catch (e) {
+          debugPrint('MyLogsTab: Error fetching action items: $e');
+        }
+      }
+
+      // 4. Collect all user IDs we need to resolve names for
+      final userIdsToResolve = <String>{};
+      userIdsToResolve.addAll(recipientIds);
+
+      // Add assigned_to from action items
+      for (final ai in actionItemsByVoiceNote.values) {
+        final assignedTo = ai['assigned_to']?.toString();
+        if (assignedTo != null && assignedTo.isNotEmpty) {
+          userIdsToResolve.add(assignedTo);
+        }
+        // Add user IDs from interaction history
+        final history = ai['interaction_history'];
+        if (history is List) {
+          for (final entry in history) {
+            final uid = entry['user_id']?.toString();
+            if (uid != null && uid.isNotEmpty) {
+              userIdsToResolve.add(uid);
+            }
+          }
+        }
+      }
+
+      // 5. Batch fetch user names
+      Map<String, String> userNames = {};
+      if (userIdsToResolve.isNotEmpty) {
+        try {
+          final users = await _supabase
+              .from('users')
+              .select('id, email, full_name')
+              .inFilter('id', userIdsToResolve.toList());
+
+          for (final u in users) {
+            final id = u['id']?.toString();
+            if (id != null) {
+              userNames[id] = u['full_name']?.toString() ??
+                  u['email']?.toString() ??
+                  'Unknown';
+            }
+          }
+        } catch (e) {
+          debugPrint('MyLogsTab: Error fetching user names: $e');
+        }
+      }
+
+      // 6. Enrich each note
+      final enriched = notesList.map((note) {
+        final noteId = note['id']?.toString() ?? '';
+        final recipientId = note['recipient_id']?.toString();
+        final actionItem = actionItemsByVoiceNote[noteId];
+
+        // Resolve recipient name
+        String? recipientName;
+        if (recipientId != null && userNames.containsKey(recipientId)) {
+          recipientName = userNames[recipientId];
+        } else if (actionItem != null) {
+          // Fallback: use action item's assigned_to
+          final assignedTo = actionItem['assigned_to']?.toString();
+          if (assignedTo != null && userNames.containsKey(assignedTo)) {
+            recipientName = userNames[assignedTo];
+          }
+        }
+
+        // Enrich interaction history with names
+        List<Map<String, dynamic>>? managerResponses;
+        if (actionItem != null && actionItem['interaction_history'] is List) {
+          managerResponses = (actionItem['interaction_history'] as List)
+              .map((entry) {
+            final uid = entry['user_id']?.toString();
+            return {
+              ...Map<String, dynamic>.from(entry),
+              'user_name': uid != null ? (userNames[uid] ?? 'Manager') : 'Manager',
+            };
+          }).toList();
+        }
+
+        return {
+          ...note,
+          'recipient_name': recipientName,
+          'action_item': actionItem,
+          'manager_responses': managerResponses,
+        };
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _enrichedNotes = enriched;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('MyLogsTab: Error loading notes: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString();
+          _isLoading = false;
+        });
+      }
     }
-
-    return _LogData(
-      englishText: englishText,
-      originalText: originalText,
-      languageCode: languageCode.toString(),
-      translatedText: translatedText,
-    );
   }
+
+  // ─── Build ──────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Record hero
+        // Record hero section (unchanged)
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 24),
@@ -163,105 +406,59 @@ class _MyLogsTabState extends State<MyLogsTab> {
 
         const SizedBox(height: 4),
 
-        // Logs list — filtered to current worker only
+        // Notes list
         Expanded(
-          child: StreamBuilder<List<Map<String, dynamic>>>(
-            stream: _supabase
-                .from('voice_notes')
-                .stream(primaryKey: ['id'])
-                .eq('user_id', widget.userId)
-                .order('created_at', ascending: false),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: CircularProgressIndicator(
-                    color: Color(0xFF1A237E),
-                  ),
-                );
-              }
-
-              if (snapshot.hasError) {
-                return Center(
-                  child: Text('Error: ${snapshot.error}'),
-                );
-              }
-
-              if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(LucideIcons.micOff, size: 56, color: Colors.grey.shade300),
-                      const SizedBox(height: 12),
-                      Text('No voice notes yet',
-                        style: TextStyle(color: Colors.grey.shade500, fontSize: 15)),
-                      const SizedBox(height: 4),
-                      Text('Tap the mic above to create your first note',
-                        style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
-                    ],
-                  ),
-                );
-              }
-
-              // Filter out threaded replies (parent_id != null) from the top-level list
-              final notes = snapshot.data!
-                  .where((n) => n['parent_id'] == null)
-                  .toList();
-
-              if (notes.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(LucideIcons.micOff, size: 56, color: Colors.grey.shade300),
-                      const SizedBox(height: 12),
-                      Text('No voice notes yet',
-                        style: TextStyle(color: Colors.grey.shade500, fontSize: 15)),
-                    ],
-                  ),
-                );
-              }
-
-              return RefreshIndicator(
-                onRefresh: () async => setState(() {}),
-                child: ListView.builder(
-                  padding: const EdgeInsets.only(top: 8, bottom: 24),
-                  itemCount: notes.length,
-                  itemBuilder: (context, i) {
-                    final note = notes[i];
-                    final parsed = _parseNote(note);
-                    return LogCard(
-                      id: note['id'] ?? '',
-                      englishText: parsed.englishText,
-                      originalText: parsed.originalText,
-                      languageCode: parsed.languageCode,
-                      audioUrl: note['audio_url'] ?? '',
-                      translatedText: parsed.translatedText,
-                      accountId: widget.accountId,
-                      userId: widget.userId,
-                      projectId: widget.projectId,
-                    );
-                  },
-                ),
-              );
-            },
-          ),
+          child: _buildNotesList(),
         ),
       ],
     );
   }
-}
 
-class _LogData {
-  final String englishText;
-  final String originalText;
-  final String languageCode;
-  final String? translatedText;
+  Widget _buildNotesList() {
+    if (_isLoading) {
+      return const LoadingWidget(message: 'Loading your notes...');
+    }
 
-  _LogData({
-    required this.englishText,
-    required this.originalText,
-    required this.languageCode,
-    this.translatedText,
-  });
+    if (_errorMessage != null) {
+      return ErrorStateWidget(
+        message: _errorMessage!,
+        onRetry: _loadNotes,
+      );
+    }
+
+    if (_enrichedNotes.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(LucideIcons.micOff, size: 56, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+            Text('No voice notes yet',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 15)),
+            const SizedBox(height: 4),
+            Text('Tap the mic above to create your first note',
+                style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadNotes,
+      color: AppTheme.primaryIndigo,
+      child: ListView.builder(
+        padding: const EdgeInsets.only(top: 8, bottom: 24),
+        itemCount: _enrichedNotes.length,
+        itemBuilder: (context, i) {
+          return LogCard(
+            note: _enrichedNotes[i],
+            accountId: widget.accountId,
+            userId: widget.userId,
+            projectId: widget.projectId,
+            onDeleted: _loadNotes,
+          );
+        },
+      ),
+    );
+  }
 }

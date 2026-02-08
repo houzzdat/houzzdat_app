@@ -3,7 +3,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_card.dart';
-import 'package:houzzdat_app/features/worker/models/voice_note_card_view_model.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'dart:typed_data';
 
@@ -52,13 +51,13 @@ class _FeedTabState extends State<FeedTab> {
           .eq('account_id', widget.accountId!);
       final users = await _supabase
           .from('users')
-          .select('id, email')
+          .select('id, email, full_name')
           .eq('account_id', widget.accountId!);
 
       if (mounted) {
         setState(() {
           _projectNames = {for (var p in projects) p['id'].toString(): p['name']?.toString() ?? 'Site'};
-          _userEmails = {for (var u in users) u['id'].toString(): u['email']?.toString() ?? 'User'};
+          _userEmails = {for (var u in users) u['id'].toString(): u['full_name']?.toString() ?? u['email']?.toString() ?? 'User'};
         });
       }
     } catch (e) {
@@ -317,18 +316,6 @@ class _FeedTabState extends State<FeedTab> {
     } catch (e) {
       debugPrint('Error creating action: $e');
     }
-  }
-
-  VoiceNoteCardViewModel _createViewModel(Map<String, dynamic> note) {
-    return VoiceNoteCardViewModel(
-      id: note['id']?.toString() ?? '',
-      originalTranscript: note['transcript']?.toString() ?? '',
-      originalLanguageLabel: note['language']?.toString() ?? 'EN',
-      audioUrl: note['audio_url']?.toString() ?? '',
-      translatedTranscript: note['translated_transcript']?.toString(),
-      isEditable: false,
-      isProcessing: note['status']?.toString() == 'processing',
-    );
   }
 
   Widget _buildFilterChip(
@@ -652,10 +639,11 @@ class _FeedTabState extends State<FeedTab> {
                     return Column(
                       children: [
                         VoiceNoteCard(
-                          viewModel: _createViewModel(note),
                           note: note,
                           isReplying: isReplying,
                           onReply: () => _handleReply(note),
+                          senderName: _userEmails[note['user_id']?.toString()],
+                          projectName: _projectNames[note['project_id']?.toString()],
                           onAcknowledge: () => _handleAcknowledge(note),
                           onAddNote: () => _handleAddNoteToVoiceNote(note),
                           onCreateAction: () => _handleCreateActionFromNote(note),

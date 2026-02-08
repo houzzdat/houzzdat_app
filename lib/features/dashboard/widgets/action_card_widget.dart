@@ -41,6 +41,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
   Map<String, dynamic>? _voiceNote;
   List<Map<String, dynamic>> _interactionHistory = [];
   bool _isLoading = false;
+  String? _voiceNoteError;
 
   // Two-tier state
   bool _localExpanded = false;
@@ -75,6 +76,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     if (widget.expandedCardId == widget.item['id'] &&
         oldWidget.expandedCardId != widget.item['id'] &&
         _voiceNote == null) {
+      _voiceNoteError = null;
       _loadVoiceNote();
     }
   }
@@ -179,17 +181,33 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
 
   Future<void> _loadVoiceNote() async {
     if (_voiceNote != null || widget.item['voice_note_id'] == null) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _voiceNoteError = null;
+    });
     try {
       final note = await _supabase
           .from('voice_notes')
-          .select('audio_url, transcription, transcript_final, transcript_en_current, is_edited, status')
+          .select('audio_url, transcription, transcript_final, transcript_en_current, transcript_raw_current, transcript_raw, detected_language_code, is_edited, status')
           .eq('id', widget.item['voice_note_id'])
-          .single();
-      if (mounted) setState(() { _voiceNote = note; _isLoading = false; });
+          .maybeSingle();
+      if (mounted) {
+        setState(() {
+          _voiceNote = note;
+          _isLoading = false;
+          if (note == null) {
+            _voiceNoteError = 'Voice note not found';
+          }
+        });
+      }
     } catch (e) {
       debugPrint('Error loading voice note: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _voiceNoteError = 'Failed to load voice note';
+        });
+      }
     }
   }
 
@@ -199,10 +217,14 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     try {
       final data = await _supabase
           .from('users')
-          .select('full_name')
+          .select('full_name, email')
           .eq('id', userId)
           .single();
-      if (mounted) setState(() => _senderName = data['full_name']?.toString() ?? 'Unknown');
+      if (mounted) {
+        setState(() => _senderName = data['full_name']?.toString()
+            ?? data['email']?.toString()
+            ?? 'Unknown');
+      }
     } catch (_) {}
   }
 
@@ -239,6 +261,101 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
         });
       }
     } catch (_) {}
+  }
+
+  // ─── Voice Note Progressive Transcript ──────────────────────
+
+  Widget _buildVoiceNoteTranscript() {
+    final status = _voiceNote!['status']?.toString() ?? '';
+    final isProcessing = status == 'processing';
+    final isTranscribed = status == 'transcribed';
+    final isTranslated = status == 'translated';
+    final isCompleted = status == 'completed';
+
+    // Still waiting for ASR
+    if (isProcessing) {
+      return Padding(
+        padding: const EdgeInsets.only(top: AppTheme.spacingS),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.textSecondary),
+            ),
+            const SizedBox(width: AppTheme.spacingS),
+            Text(
+              'Transcribing...',
+              style: AppTheme.bodySmall.copyWith(
+                color: AppTheme.textSecondary,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Get best available transcript
+    final transcription = _voiceNote!['transcript_final'] ??
+        _voiceNote!['transcription'] ??
+        _voiceNote!['transcript_en_current'] ??
+        _voiceNote!['transcript_raw_current'] ??
+        _voiceNote!['transcript_raw'];
+
+    if (transcription == null || transcription.toString().isEmpty) {
+      // Completed but no transcript — fall back to TranscriptionDisplay
+      return TranscriptionDisplay(
+        noteId: widget.item['voice_note_id'],
+        transcription: null,
+        status: status,
+        isEdited: _voiceNote!['is_edited'],
+      );
+    }
+
+    // For completed notes, use TranscriptionDisplay (supports editing)
+    if (isCompleted) {
+      return TranscriptionDisplay(
+        noteId: widget.item['voice_note_id'],
+        transcription: transcription.toString(),
+        status: status,
+        isEdited: _voiceNote!['is_edited'],
+      );
+    }
+
+    // Intermediate states: show transcript with progress indicator
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: AppTheme.spacingS),
+        Text(
+          transcription.toString(),
+          style: AppTheme.bodyMedium,
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            SizedBox(
+              width: 10,
+              height: 10,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: AppTheme.infoBlue.withValues(alpha: 0.6),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              isTranscribed ? 'Translating...' : (isTranslated ? 'Analysing...' : 'Processing...'),
+              style: AppTheme.caption.copyWith(
+                color: AppTheme.infoBlue.withValues(alpha: 0.7),
+                fontStyle: FontStyle.italic,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   // ─── Interaction Recording (preserved) ────────────────────────
@@ -1492,21 +1609,52 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
             padding: EdgeInsets.all(AppTheme.spacingL),
             child: Center(child: CircularProgressIndicator()),
           )
+        else if (_voiceNoteError != null)
+          Padding(
+            padding: const EdgeInsets.all(AppTheme.spacingM),
+            child: Container(
+              padding: const EdgeInsets.all(AppTheme.spacingM),
+              decoration: BoxDecoration(
+                color: AppTheme.warningOrange.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(AppTheme.radiusM),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, size: 20, color: AppTheme.warningOrange),
+                  const SizedBox(width: AppTheme.spacingS),
+                  Expanded(
+                    child: Text(
+                      _voiceNoteError!,
+                      style: AppTheme.bodySmall.copyWith(color: AppTheme.warningOrange),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh, size: 20, color: AppTheme.warningOrange),
+                    onPressed: () {
+                      setState(() {
+                        _voiceNote = null;
+                        _voiceNoteError = null;
+                      });
+                      _loadVoiceNote();
+                    },
+                    tooltip: 'Retry',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+          )
         else if (_voiceNote != null)
           Padding(
             padding: const EdgeInsets.all(AppTheme.spacingM),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (_voiceNote!['audio_url'] != null)
                   VoiceNoteAudioPlayer(audioUrl: _voiceNote!['audio_url']),
-                TranscriptionDisplay(
-                  noteId: widget.item['voice_note_id'],
-                  transcription: _voiceNote!['transcript_final'] ??
-                      _voiceNote!['transcription'] ??
-                      _voiceNote!['transcript_en_current'],
-                  status: _voiceNote!['status'] ?? '',
-                  isEdited: _voiceNote!['is_edited'],
-                ),
+                // Progressive status: show transcript as it arrives
+                _buildVoiceNoteTranscript(),
               ],
             ),
           ),
@@ -1837,10 +1985,16 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
                     widget.onExpandChanged!(
                       willExpand ? widget.item['id'] : null,
                     );
-                    if (willExpand && _voiceNote == null) _loadVoiceNote();
+                    if (willExpand && _voiceNote == null) {
+                      _voiceNoteError = null;
+                      _loadVoiceNote();
+                    }
                   } else {
                     setState(() => _localExpanded = !_localExpanded);
-                    if (_localExpanded && _voiceNote == null) _loadVoiceNote();
+                    if (_localExpanded && _voiceNote == null) {
+                      _voiceNoteError = null;
+                      _loadVoiceNote();
+                    }
                   }
                 },
                 child: Column(

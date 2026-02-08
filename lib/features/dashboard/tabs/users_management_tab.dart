@@ -36,7 +36,7 @@ class _UsersManagementTabState extends State<UsersManagementTab> {
     if (projectId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${user['email']} is not assigned to a project'),
+          content: Text('${user['full_name'] ?? user['email']} is not assigned to a project'),
           backgroundColor: AppTheme.warningOrange,
         ),
       );
@@ -65,7 +65,7 @@ class _UsersManagementTabState extends State<UsersManagementTab> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('✅ Voice note sent to ${user['email']}'),
+              content: Text('✅ Voice note sent to ${user['full_name'] ?? user['email']}'),
               backgroundColor: AppTheme.successGreen,
             ),
           );
@@ -198,6 +198,8 @@ class _UserCardState extends State<_UserCard> {
   Widget build(BuildContext context) {
     final role = widget.user['role'] ?? 'worker';
     final email = widget.user['email'] ?? 'User';
+    final fullName = widget.user['full_name']?.toString();
+    final displayName = fullName ?? email;
     final roleColor = _getRoleColor(role);
 
     return Container(
@@ -221,7 +223,7 @@ class _UserCardState extends State<_UserCard> {
                   radius: 24,
                   backgroundColor: roleColor,
                   child: Text(
-                    email[0].toUpperCase(),
+                    displayName[0].toUpperCase(),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -238,11 +240,22 @@ class _UserCardState extends State<_UserCard> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        email,
+                        displayName,
                         style: AppTheme.bodyLarge.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
                       ),
+                      if (fullName != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          email,
+                          style: AppTheme.bodySmall.copyWith(
+                            color: AppTheme.textSecondary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                       const SizedBox(height: 4),
                       Row(
                         children: [

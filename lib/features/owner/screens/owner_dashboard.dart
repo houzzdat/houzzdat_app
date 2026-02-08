@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/services/notification_service.dart';
+import 'package:houzzdat_app/core/services/company_context_service.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_projects_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_approvals_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_messages_tab.dart';
@@ -36,6 +37,13 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
     if (user == null) return;
 
     try {
+      // Use CompanyContextService if available
+      final companyService = CompanyContextService();
+      String? accountId;
+      if (companyService.isInitialized && companyService.activeAccountId != null) {
+        accountId = companyService.activeAccountId;
+      }
+
       final data = await _supabase
           .from('users')
           .select('account_id, full_name, email')
@@ -44,7 +52,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
 
       if (mounted) {
         setState(() {
-          _accountId = data['account_id']?.toString();
+          _accountId = accountId ?? data['account_id']?.toString();
           _ownerId = user.id;
           _ownerName = data['full_name'] ?? data['email'] ?? 'Owner';
         });
@@ -117,6 +125,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
 
   Future<void> _handleLogout() async {
     _notifSubscription?.cancel();
+    await CompanyContextService().reset();
     await _supabase.auth.signOut();
   }
 

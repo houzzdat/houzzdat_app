@@ -43,6 +43,8 @@
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>HOUZZDAT needs your location to verify you are on the construction site for attendance check-in.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>HOUZZDAT needs microphone access to record voice notes on the construction site.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

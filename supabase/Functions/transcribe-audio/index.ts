@@ -1,4 +1,4 @@
-﻿import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
@@ -6,11 +6,24 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// Expanded language names covering all 22 scheduled Indian languages + common ones
 const LANGUAGE_NAMES: { [key: string]: string } = {
   'en': 'English', 'hi': 'Hindi', 'te': 'Telugu', 'ta': 'Tamil', 'kn': 'Kannada',
   'mr': 'Marathi', 'gu': 'Gujarati', 'pa': 'Punjabi', 'ml': 'Malayalam',
-  'bn': 'Bengali', 'ur': 'Urdu'
+  'bn': 'Bengali', 'ur': 'Urdu', 'as': 'Assamese', 'or': 'Odia',
+  'kok': 'Konkani', 'mai': 'Maithili', 'sd': 'Sindhi', 'ne': 'Nepali',
+  'sa': 'Sanskrit', 'doi': 'Dogri', 'mni': 'Manipuri', 'sat': 'Santali',
+  'ks': 'Kashmiri', 'bo': 'Bodo'
 }
+
+// Construction domain context prompt for Whisper ASR
+const CONSTRUCTION_CONTEXT_PROMPT =
+  'Construction site voice note. Common terms: concrete, scaffolding, rebar, foundation, ' +
+  'excavation, slab, formwork, shuttering, plaster, aggregate, cement, TMT bar, centering, ' +
+  'curing, waterproofing, RCC, PCC, lintel, beam, column, footing, pile, grout, mortar, ' +
+  'brick, block, tile, paint, primer, putty, sand, gravel, crusher, mixer, vibrator, ' +
+  'labour, supervisor, contractor, architect, engineer, foreman, mason, carpenter, plumber, ' +
+  'electrician, welder, fitter, helper, daily wages, piecework, overtime.'
 
 /**
  * Critical/safety keywords that trigger Red Alert Banner on manager dashboard.
@@ -34,7 +47,7 @@ function detectCriticalKeywords(transcript: string): boolean {
  */
 function mapAiIntent(intent: string): string {
   const normalized = (intent || '').toLowerCase().trim();
-  
+
   if (['update', 'approval', 'action_required', 'information'].includes(normalized)) {
     return normalized;
   }
@@ -68,7 +81,6 @@ function getActionCategory(intent: string): 'approval' | 'action_required' | nul
   const normalized = intent.toLowerCase().trim();
 
   // Updates and information do NOT create action items (Ambient Updates).
-  // Updates appear only in the Feed tab; information is purely FYI.
   if (normalized === 'information' || normalized === 'update') {
     return null;
   }
@@ -80,17 +92,442 @@ function getActionCategory(intent: string): 'approval' | 'action_required' | nul
   return null;
 }
 
+/**
+ * Fallback keyword-based classifier when AI classification fails.
+ * Returns a classification with low confidence (0.3).
+ */
+function fallbackClassify(transcript: string): any {
+  const lowerText = transcript.toLowerCase();
+
+  const approvalKeywords = [
+    'please approve', 'approve', 'shall we', 'can we', 'should we',
+    'may we', 'permission', 'authorize', 'thinking of', 'planning to',
+    'want to', 'would like to', 'requesting', 'need approval'
+  ];
+
+  const problemKeywords = [
+    'problem', 'issue', 'urgent', 'danger', 'weak', 'broken',
+    'collapsed', 'unsafe', 'fix', 'help', 'emergency', 'leak',
+    'crack', 'damage', 'delayed', 'shortage', 'missing'
+  ];
+
+  const hasApprovalRequest = approvalKeywords.some(kw => lowerText.includes(kw));
+  const hasProblem = problemKeywords.some(kw => lowerText.includes(kw));
+
+  if (hasApprovalRequest) {
+    return {
+      intent: 'approval',
+      priority: 'Med',
+      short_summary: transcript.substring(0, 100),
+      detailed_summary: transcript,
+      confidence_score: 0.3,
+      materials: [],
+      labor: [],
+      approvals: [],
+      project_events: []
+    };
+  } else if (hasProblem) {
+    return {
+      intent: 'action_required',
+      priority: 'High',
+      short_summary: transcript.substring(0, 100),
+      detailed_summary: transcript,
+      confidence_score: 0.3,
+      materials: [],
+      labor: [],
+      approvals: [],
+      project_events: []
+    };
+  } else {
+    return {
+      intent: 'update',
+      priority: 'Low',
+      short_summary: transcript.substring(0, 100),
+      detailed_summary: transcript,
+      confidence_score: 0.3,
+      materials: [],
+      labor: [],
+      approvals: [],
+      project_events: []
+    };
+  }
+}
+
+/* ============================================================
+   RETRY UTILITY
+============================================================ */
+
+/**
+ * Fetch with exponential backoff retry for transient failures.
+ * Retries on 429 (rate limit), 5xx (server errors), and network timeouts.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3
+): Promise<Response> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const timeoutMs = attempt === 1 ? 30000 : 45000;
+      const res = await fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      if (res.ok) return res;
+
+      // Retry on rate limit or server errors
+      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+        const backoffMs = 1000 * attempt;
+        console.warn(`  ⚠ Attempt ${attempt} got ${res.status}, retrying in ${backoffMs}ms...`);
+        await new Promise(r => setTimeout(r, backoffMs));
+        continue;
+      }
+
+      return res; // Non-retryable error, let caller handle
+    } catch (e: any) {
+      if (attempt < maxRetries && (e.name === 'AbortError' || e.name === 'TypeError' || e.name === 'TimeoutError')) {
+        const backoffMs = 1000 * attempt;
+        console.warn(`  ⚠ Attempt ${attempt} failed (${e.name}), retrying in ${backoffMs}ms...`);
+        await new Promise(r => setTimeout(r, backoffMs));
+        continue;
+      }
+      throw e;
+    }
+  }
+  // Should never reach here, but TypeScript needs it
+  throw new Error('fetchWithRetry exhausted all retries');
+}
+
+/* ============================================================
+   AUDIO DATA INTERFACE — Download Once, Pass Everywhere
+============================================================ */
+
+/**
+ * Holds downloaded audio data so we never re-download.
+ */
+interface AudioData {
+  blob: Blob;
+  base64: string | null;    // Lazily computed for Gemini
+  fileName: string;
+  mimeType: string;
+}
+
+/**
+ * Downloads audio from storage URL exactly ONCE and returns AudioData.
+ */
+async function downloadAudioOnce(audioUrl: string): Promise<AudioData> {
+  console.log('  → Downloading audio (single download)...');
+  const t0 = performance.now();
+
+  const audioRes = await fetchWithRetry(audioUrl, {});
+  if (!audioRes.ok) {
+    throw new Error(`Failed to fetch audio: ${audioRes.statusText}`);
+  }
+
+  const blob = await audioRes.blob();
+  const fileName = audioUrl.split('/').pop() || 'audio.webm';
+  const mimeType = fileName.endsWith('.webm') ? 'audio/webm'
+    : fileName.endsWith('.m4a') ? 'audio/mp4'
+    : 'audio/mpeg';
+
+  console.log(`  ✓ Audio downloaded in ${(performance.now() - t0).toFixed(0)}ms (${(blob.size / 1024).toFixed(1)} KB)`);
+
+  return { blob, base64: null, fileName, mimeType };
+}
+
+/**
+ * Gets base64 encoding of audio data (lazy — only computed when needed for Gemini).
+ */
+async function getAudioBase64(audioData: AudioData): Promise<string> {
+  if (audioData.base64) return audioData.base64;
+
+  const arrayBuffer = await audioData.blob.arrayBuffer();
+  audioData.base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+  return audioData.base64;
+}
+
+/* ============================================================
+   GEMINI PROVIDER FUNCTIONS (uses AudioData, same pipeline)
+============================================================ */
+
+/**
+ * Performs ASR using Gemini 1.5 Flash (multimodal audio-to-text).
+ */
+async function performGeminiASR(key: string, audioData: AudioData, contextPrompt: string) {
+  const base64Audio = await getAudioBase64(audioData);
+
+  console.log('  → Calling Gemini 1.5 Flash for transcription...');
+  const res = await fetchWithRetry(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            {
+              text: `Transcribe this audio accurately. Context: ${contextPrompt}. ` +
+                `The audio may be in English or any Indian language (Hindi, Telugu, Tamil, Kannada, etc.). ` +
+                `Return ONLY valid JSON (no markdown): {"text": "transcribed text here", "language": "ISO 639-1 code"}`
+            },
+            {
+              inline_data: {
+                mime_type: audioData.mimeType,
+                data: base64Audio
+              }
+            }
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 2000
+        }
+      })
+    }
+  );
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Gemini ASR failed: ${data.error?.message || res.status}`);
+  }
+
+  const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+  try {
+    // Strip markdown code blocks if present
+    const cleaned = textResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    return {
+      text: parsed.text || textResponse,
+      language: parsed.language || 'unknown',
+      confidence: null // Gemini doesn't provide confidence scores
+    };
+  } catch {
+    return {
+      text: textResponse.trim(),
+      language: 'unknown',
+      confidence: null
+    };
+  }
+}
+
+/**
+ * Calls Gemini 1.5 Flash for LLM tasks (translation, classification).
+ */
+async function callGeminiLLM(key: string, options: { prompt: string, isJson: boolean }) {
+  const res = await fetchWithRetry(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: options.prompt }] }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 2000,
+          ...(options.isJson ? { responseMimeType: "application/json" } : {})
+        }
+      })
+    }
+  );
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Gemini LLM failed: ${data.error?.message || res.status}`);
+  }
+
+  const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+  if (options.isJson) {
+    try {
+      const cleaned = textResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+      return JSON.parse(cleaned);
+    } catch (e) {
+      console.error('Invalid JSON from Gemini:', textResponse);
+      throw new Error('Gemini returned invalid JSON');
+    }
+  }
+
+  return textResponse;
+}
+
+/* ============================================================
+   WHISPER ASR (Groq / OpenAI — uses AudioData, no re-download)
+============================================================ */
+
+/**
+ * Performs ASR using Groq or OpenAI Whisper.
+ * Accepts pre-downloaded AudioData — no network fetch needed.
+ */
+async function performASR(
+  provider: string,
+  key: string,
+  audioData: AudioData,
+  preferredLanguage?: string
+) {
+  const formData = new FormData();
+  formData.append('file', new File([audioData.blob], audioData.fileName));
+  formData.append(
+    'model',
+    provider === 'groq' ? 'whisper-large-v3' : 'whisper-1'
+  );
+  formData.append('response_format', 'verbose_json');
+
+  // Construction domain context prompt for better accuracy
+  formData.append('prompt', CONSTRUCTION_CONTEXT_PROMPT);
+
+  // Language hint from user's preferred language
+  if (preferredLanguage && preferredLanguage !== 'en') {
+    formData.append('language', preferredLanguage);
+  }
+
+  // Deterministic output with temperature=0
+  formData.append('temperature', '0');
+
+  const endpoint = provider === 'groq'
+    ? 'https://api.groq.com/openai/v1/audio/transcriptions'
+    : 'https://api.openai.com/v1/audio/transcriptions';
+
+  console.log(`  → Calling ${provider} Whisper ASR...`);
+  const t0 = performance.now();
+
+  const res = await fetchWithRetry(endpoint, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}` },
+    body: formData
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`ASR failed: ${data.error?.message}`);
+  }
+
+  console.log(`  ✓ ASR completed in ${(performance.now() - t0).toFixed(0)}ms`);
+
+  // Extract confidence score from segments
+  let confidence = null;
+  if (data.segments && data.segments.length > 0) {
+    const avgConfidence = data.segments.reduce((sum: number, seg: any) => {
+      return sum + (seg.avg_logprob || seg.confidence || 0);
+    }, 0) / data.segments.length;
+
+    // Convert log probability to 0-1 confidence if needed
+    confidence = avgConfidence < 0 ? Math.exp(avgConfidence) : avgConfidence;
+  }
+
+  return {
+    text: data.text,
+    language: data.language,
+    confidence: confidence
+  };
+}
+
+/* ============================================================
+   LLM — Translation & Classification (Groq / OpenAI / Gemini)
+============================================================ */
+
+/**
+ * Calls LLM for translation and classification.
+ * Routes to Groq (Llama 3.3), OpenAI (GPT-4o-mini), or Gemini (1.5 Flash)
+ * based on account's transcription_provider setting.
+ * Uses fetchWithRetry for resilience.
+ */
+async function callRegistryLLM(
+  provider: string,
+  key: string,
+  options: {
+    prompt: string,
+    context?: string | null,
+    isJson: boolean
+  }
+) {
+  // Route to Gemini if needed
+  if (provider === 'gemini') {
+    return callGeminiLLM(key, { prompt: options.prompt, isJson: options.isJson });
+  }
+
+  const baseUrl = provider === 'groq'
+    ? 'https://api.groq.com/openai/v1'
+    : 'https://api.openai.com/v1';
+
+  const model = provider === 'groq'
+    ? 'llama-3.3-70b-versatile'
+    : 'gpt-4o-mini';
+
+  let systemPrompt = options.prompt;
+
+  // Ensure JSON mode is explicit
+  if (options.isJson && !systemPrompt.toLowerCase().includes('json')) {
+    systemPrompt += "\n\nReturn the output in valid JSON format.";
+  }
+
+  const messages: any[] = [{ role: 'system', content: systemPrompt }];
+  if (options.context) {
+    messages.push({ role: 'user', content: options.context });
+  }
+
+  console.log(`  → Calling ${provider} LLM (${model})...`);
+  const t0 = performance.now();
+
+  const res = await fetchWithRetry(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${key}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      response_format: options.isJson ? { type: "json_object" } : undefined,
+      temperature: 0.1
+    })
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`LLM call failed: ${data.error?.message}`);
+  }
+
+  console.log(`  ✓ LLM completed in ${(performance.now() - t0).toFixed(0)}ms`);
+
+  const content = data.choices[0].message.content;
+
+  try {
+    return options.isJson ? JSON.parse(content) : content;
+  } catch (e) {
+    console.error("Invalid JSON from AI:", content);
+    throw new Error("AI returned invalid JSON");
+  }
+}
+
+/* ============================================================
+   MAIN HANDLER — Streamlined Pipeline (All Providers)
+
+   Same optimized process for Groq, OpenAI, and Gemini:
+   Download audio ONCE → ASR (original lang) →
+   LLM text translate → LLM classify → Parallel DB writes
+
+   Provider is selected per-account by super admin via
+   accounts.transcription_provider ('groq' | 'openai' | 'gemini')
+============================================================ */
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
+  const pipelineStart = performance.now();
   console.log("=== Voice Note Processing Started ===");
+
+  // Track voice note ID for error status updates
+  let voiceNoteId: string | null = null;
+  let supabase: any = null;
 
   try {
     const payload = await req.json()
-    const voiceNoteId = payload.voice_note_id || payload.record?.id
+    voiceNoteId = payload.voice_note_id || payload.record?.id
     if (!voiceNoteId) throw new Error("voice_note_id required")
 
-    const supabase = createClient(
+    supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
@@ -99,13 +536,13 @@ Deno.serve(async (req) => {
        PHASE 1: FETCH VOICE NOTE & VALIDATE STATE
     -------------------------------------------------- */
     console.log(`[1] Fetching voice note ${voiceNoteId}...`);
-    
+
     const { data: voiceNote, error: vnErr } = await supabase
       .from("voice_notes")
       .select(`
         *,
         accounts(transcription_provider),
-        users!voice_notes_user_id_fkey(id, role, account_id, reports_to),
+        users!voice_notes_user_id_fkey(id, role, account_id, reports_to, preferred_language, preferred_languages),
         projects(id, name, account_id)
       `)
       .eq("id", voiceNoteId)
@@ -124,152 +561,232 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get(`${providerName.toUpperCase()}_API_KEY`);
     if (!apiKey) throw new Error(`API Key for ${providerName} not found`);
 
+    // Get user's preferred language for ASR hint
+    const userLang = voiceNote.users?.preferred_language || 'en';
+
+    // Capture original field values from Phase 1 fetch (eliminates redundant DB reads)
+    const hasOriginalRaw = !!voiceNote.transcript_raw_original;
+    const hasOriginalEn = !!voiceNote.transcript_en_original;
+
+    /* --------------------------------------------------
+       PHASE 1.5: PARALLEL PREFETCH — Audio + AI Prompts
+       Downloads audio ONCE and fetches both AI prompts
+       in parallel to minimize wait time.
+    -------------------------------------------------- */
+    console.log(`[1.5] Prefetching audio + AI prompts in parallel (provider: ${providerName})...`);
+    const prefetchStart = performance.now();
+
+    // Only download audio if we need ASR (transcript not already available)
+    const needsASR = !voiceNote.transcript_raw_original;
+    const needsTranslation = !voiceNote.transcript_en_original;
+
+    const [audioData, translationPromptResult, analysisPromptResult] = await Promise.all([
+      // 1. Download audio once (only if needed for ASR)
+      needsASR
+        ? downloadAudioOnce(voiceNote.audio_url)
+        : Promise.resolve(null),
+
+      // 2. Fetch translation prompt (only if translation needed)
+      needsTranslation
+        ? supabase
+            .from("ai_prompts")
+            .select("*")
+            .eq("provider", providerName)
+            .eq("purpose", "translation_normalization")
+            .eq("is_active", true)
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+
+      // 3. Fetch analysis prompt
+      supabase
+        .from("ai_prompts")
+        .select("*")
+        .eq("provider", providerName)
+        .eq("purpose", "voice_note_analysis")
+        .eq("is_active", true)
+        .order("version", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    ]);
+
+    const translationPrompt = translationPromptResult?.data;
+    const analysisPrompt = analysisPromptResult?.data;
+
+    console.log(`  ✓ Prefetch completed in ${(performance.now() - prefetchStart).toFixed(0)}ms`);
+
     /* --------------------------------------------------
        PHASE 2: AUTOMATIC SPEECH RECOGNITION (ASR)
+       Transcribes in the ORIGINAL spoken language.
+       Audio blob is passed directly — no re-download.
     -------------------------------------------------- */
     let transcriptRaw = voiceNote.transcript_raw_original;
     let detectedLangCode = voiceNote.detected_language_code;
-    let asrConfidence: number | undefined; // FIXED: Capture ASR confidence
+    let asrConfidence: number | undefined;
 
-    if (!transcriptRaw) {
-      console.log("[2] Running ASR (Whisper)...");
-      const asr = await performASR(providerName, apiKey, voiceNote.audio_url);
-      transcriptRaw = asr.text;
-      detectedLangCode = asr.language;
-      asrConfidence = asr.confidence; // FIXED: Store confidence score
+    if (!transcriptRaw && audioData) {
+      console.log("[2] Running ASR (original language)...");
 
-      // Check if original is already set (race condition safety)
-      const { data: currentVN } = await supabase
-        .from("voice_notes")
-        .select("transcript_raw_original")
-        .eq("id", voiceNoteId)
-        .single();
-      
-      const updatePayload: any = {
-        transcript_raw_current: transcriptRaw,
-        detected_language_code: detectedLangCode,
-        detected_language: LANGUAGE_NAMES[detectedLangCode] || detectedLangCode,
-        asr_confidence: asrConfidence, // FIXED: Save ASR confidence
-        status: 'processing'
-      };
-
-      // Only set original if not already present (idempotency)
-      if (!currentVN?.transcript_raw_original) {
-        updatePayload.transcript_raw_original = transcriptRaw;
+      if (providerName === 'gemini') {
+        // Gemini uses multimodal audio transcription
+        const asr = await performGeminiASR(apiKey, audioData, CONSTRUCTION_CONTEXT_PROMPT);
+        transcriptRaw = asr.text;
+        detectedLangCode = asr.language;
+        asrConfidence = asr.confidence ?? undefined;
+      } else {
+        // Groq/OpenAI Whisper — uses pre-downloaded audio blob
+        const asr = await performASR(providerName, apiKey, audioData, userLang);
+        transcriptRaw = asr.text;
+        detectedLangCode = asr.language;
+        asrConfidence = asr.confidence ?? undefined;
       }
 
-      await supabase.from("voice_notes").update(updatePayload).eq("id", voiceNoteId);
-      console.log("✓ ASR completed and synced");
+      // PROGRESSIVE WRITE: ASR result available immediately.
+      // Status → 'transcribed' so the client can show the transcript right away.
+      // Also write legacy 'transcription' field so cards display text immediately.
+      const asrLanguageName = LANGUAGE_NAMES[detectedLangCode] || detectedLangCode;
+      const asrUpdatePayload: any = {
+        transcript_raw_current: transcriptRaw,
+        transcript_raw: transcriptRaw,
+        detected_language_code: detectedLangCode,
+        detected_language: asrLanguageName,
+        asr_confidence: asrConfidence,
+        status: 'transcribed',
+        // Write to legacy/display fields so card shows text NOW
+        transcription: transcriptRaw,
+      };
+
+      // For English audio, also populate English fields immediately
+      if (detectedLangCode === 'en') {
+        asrUpdatePayload.transcript_en_current = transcriptRaw;
+        asrUpdatePayload.transcript_final = transcriptRaw;
+      }
+
+      // Only set original if not already present (idempotency — checked from Phase 1 data)
+      if (!hasOriginalRaw) {
+        asrUpdatePayload.transcript_raw_original = transcriptRaw;
+      }
+
+      await supabase.from("voice_notes").update(asrUpdatePayload).eq("id", voiceNoteId);
+      console.log("✓ ASR completed → status='transcribed' — card shows transcript now");
     } else {
       console.log("[2] ASR already completed, skipping...");
-      asrConfidence = voiceNote.asr_confidence; // Use existing confidence
+      asrConfidence = voiceNote.asr_confidence;
     }
 
     /* --------------------------------------------------
-       PHASE 3: TRANSLATION TO ENGLISH
+       PHASE 3: TRANSLATION TO ENGLISH (Text-based only)
+       Uses the original-language transcript from Phase 2.
+       Calls the account's LLM to translate TEXT → English.
+       NO audio re-download. NO Whisper /translations.
     -------------------------------------------------- */
     let transcriptEn = voiceNote.transcript_en_original;
-    
+
     if (!transcriptEn) {
-      console.log("[3] Running translation...");
-      
+      console.log("[3] Running text translation...");
+
       if (detectedLangCode === 'en') {
         transcriptEn = transcriptRaw;
         console.log("✓ Transcript already in English");
       } else {
-        // Fetch active translation prompt from ai_prompts table
-        const { data: transPrompt } = await supabase
-          .from("ai_prompts")
-          .select("*")
-          .eq("provider", providerName)
-          .eq("purpose", "translation_normalization")
-          .eq("is_active", true)
-          .limit(1)
-          .maybeSingle();
-
-        if (transPrompt) {
-          const finalPrompt = transPrompt.prompt
+        // LLM text translation — translate the original-language transcript to English
+        if (translationPrompt) {
+          const finalPrompt = translationPrompt.prompt
             .replace('{{LANGUAGE}}', LANGUAGE_NAMES[detectedLangCode] || detectedLangCode)
             .replace('{{TRANSCRIPT}}', transcriptRaw);
 
           const translationResponse = await callRegistryLLM(providerName, apiKey, {
             prompt: finalPrompt,
-            isJson: true 
+            isJson: true
           });
-          
-          // FIXED: Extract English translation correctly
-          transcriptEn = translationResponse.translated_text 
-            || translationResponse.english_translation 
+
+          transcriptEn = translationResponse.translated_text
+            || translationResponse.english_translation
             || translationResponse.translation
             || transcriptRaw;
-          
-          console.log("✓ Translation completed");
+
+          console.log("✓ LLM text translation completed");
         } else {
           console.warn("No translation prompt found, using raw transcript");
           transcriptEn = transcriptRaw;
         }
       }
 
-      // Atomic update with race condition check
-      const { data: currentVNEn } = await supabase
-        .from("voice_notes")
-        .select("transcript_en_original")
-        .eq("id", voiceNoteId)
-        .single();
-      
-      const updateEnPayload: any = { transcript_en_current: transcriptEn };
-      
-      if (!currentVNEn?.transcript_en_original) {
+      // PROGRESSIVE WRITE: Translation available immediately.
+      // Status → 'translated' so the client can show the English translation.
+      const transLanguageName = LANGUAGE_NAMES[detectedLangCode] || detectedLangCode;
+      const updateEnPayload: any = {
+        transcript_en_current: transcriptEn,
+        transcript_final: transcriptEn,
+        status: 'translated',
+        // Update legacy transcription to include both languages
+        transcription: detectedLangCode === 'en'
+          ? transcriptEn
+          : `[${transLanguageName}] ${transcriptRaw}\n\n[English] ${transcriptEn}`,
+      };
+
+      if (!hasOriginalEn) {
         updateEnPayload.transcript_en_original = transcriptEn;
       }
 
       await supabase.from("voice_notes").update(updateEnPayload).eq("id", voiceNoteId);
-      console.log("✓ Translation synced");
+      console.log("✓ Translation completed → status='translated' — card shows English now");
     } else {
       console.log("[3] Translation already completed, skipping...");
     }
 
     /* --------------------------------------------------
        PHASE 4: AI INTELLIGENCE & CLASSIFICATION
+       Uses the English translation from Phase 3.
+       Prompt was pre-fetched in Phase 1.5.
     -------------------------------------------------- */
     console.log("[4] Running AI analysis...");
-    
-    const { data: analysisPrompt } = await supabase
-      .from("ai_prompts")
-      .select("*")
-      .eq("provider", providerName)
-      .eq("purpose", "voice_note_analysis")
-      .eq("is_active", true)
-      .order("version", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+
+    let ai: any;
+    const aiModelName = providerName === 'groq' ? 'llama-3.3-70b'
+      : providerName === 'gemini' ? 'gemini-1.5-flash'
+      : 'gpt-4o-mini';
 
     if (!analysisPrompt) {
-      throw new Error("No active analysis prompt found");
-    }
-
-    // Build contextual prompt by injecting transcript directly
-    const contextualPrompt = `${analysisPrompt.prompt}
+      console.warn("No active analysis prompt found, using fallback classifier");
+      ai = fallbackClassify(transcriptEn);
+    } else {
+      // Build contextual prompt with few-shot examples injected
+      const contextualPrompt = `${analysisPrompt.prompt}
 
 PROJECT CONTEXT:
 - Project Name: ${voiceNote.projects?.name || 'Unknown Project'}
 - Speaker Role: ${voiceNote.users?.role || 'Unknown Role'}
+
+CLASSIFICATION EXAMPLES:
+- "We need 50 bags of cement and 20 TMT bars delivered by tomorrow" -> intent: action_required, priority: High
+- "Can we start the second floor slab work?" -> intent: approval, priority: Med
+- "First floor plastering is 80% complete" -> intent: update, priority: Low
+- "The scaffolding on the east side is shaking, looks unsafe" -> intent: action_required, priority: Critical
+- "Received the steel delivery, all counts verified" -> intent: update, priority: Low
+- "Need approval for additional 10 workers for next week" -> intent: approval, priority: Med
 
 TRANSCRIPT TO ANALYZE:
 "${transcriptEn}"
 
 Analyze the above transcript and return ONLY valid JSON matching the required schema.`;
 
-    const ai = await callRegistryLLM(providerName, apiKey, {
-      prompt: contextualPrompt,
-      context: null, // Context already injected above
-      isJson: true
-    });
+      try {
+        ai = await callRegistryLLM(providerName, apiKey, {
+          prompt: contextualPrompt,
+          context: null,
+          isJson: true
+        });
+      } catch (e: any) {
+        console.warn(`AI classification failed (${e.message}), using fallback classifier`);
+        ai = fallbackClassify(transcriptEn);
+      }
+    }
 
     // CRITICAL VALIDATION: Ensure AI provided required fields
     if (!ai.short_summary || ai.short_summary.trim() === '') {
       console.warn("AI did not provide short_summary, generating from transcript");
-      ai.short_summary = transcriptEn.length > 100 
+      ai.short_summary = transcriptEn.length > 100
         ? transcriptEn.substring(0, 97) + '...'
         : transcriptEn;
     }
@@ -282,11 +799,11 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
     // Validate and map intent
     const rawIntent = ai.intent || 'information';
     const finalIntent = mapAiIntent(rawIntent);
-    
+
     // Validate and map priority
     const rawPriority = ai.priority || 'Med';
     const finalPriority = mapAiPriority(rawPriority);
-    
+
     // Determine action category
     const actionCategory = getActionCategory(finalIntent);
 
@@ -294,6 +811,7 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
 
     /* --------------------------------------------------
        PHASE 5: STRUCTURED DATA EXTRACTION
+       Build all DB operations for parallel execution.
     -------------------------------------------------- */
     const dbOperations: Promise<any>[] = [];
 
@@ -308,12 +826,12 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         short_summary: ai.short_summary,
         detailed_summary: ai.detailed_summary,
         confidence_score: ai.confidence_score || 0.5,
-        ai_model: providerName === 'groq' ? 'llama-3.3-70b' : 'gpt-4o-mini',
-        prompt_version: analysisPrompt.version.toString()
+        ai_model: aiModelName,
+        prompt_version: analysisPrompt?.version?.toString() || '0'
       })
     );
 
-    // 5.2: Extract structured entities
+    // 5.2: Extract structured entities — batch insert per table
     if (ai.materials && ai.materials.length > 0) {
       const materialInserts = ai.materials.map((m: any) => ({
         voice_note_id: voiceNoteId,
@@ -327,9 +845,10 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         extracted_from: m.explicit ? 'explicit' : 'implicit',
         confidence_score: m.confidence || 0.7
       }));
-      dbOperations.push(...materialInserts.map(m => 
-        supabase.from("voice_note_material_requests").insert(m)
-      ));
+      // Single batch insert for all materials
+      dbOperations.push(
+        supabase.from("voice_note_material_requests").insert(materialInserts)
+      );
     }
 
     if (ai.labor && ai.labor.length > 0) {
@@ -342,9 +861,10 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         urgency: l.urgency || 'normal',
         confidence_score: l.confidence || 0.7
       }));
-      dbOperations.push(...laborInserts.map(l => 
-        supabase.from("voice_note_labor_requests").insert(l)
-      ));
+      // Single batch insert for all labor
+      dbOperations.push(
+        supabase.from("voice_note_labor_requests").insert(laborInserts)
+      );
     }
 
     if (ai.approvals && ai.approvals.length > 0) {
@@ -357,9 +877,10 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         requires_manager: a.requires_manager !== false,
         confidence_score: a.confidence || 0.7
       }));
-      dbOperations.push(...approvalInserts.map(a => 
-        supabase.from("voice_note_approvals").insert(a)
-      ));
+      // Single batch insert for all approvals
+      dbOperations.push(
+        supabase.from("voice_note_approvals").insert(approvalInserts)
+      );
     }
 
     if (ai.project_events && ai.project_events.length > 0) {
@@ -373,15 +894,16 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         suggested_assignee: e.suggested_assignee || null,
         confidence_score: e.confidence || 0.7
       }));
-      dbOperations.push(...eventInserts.map(e => 
-        supabase.from("voice_note_project_events").insert(e)
-      ));
+      // Single batch insert for all events
+      dbOperations.push(
+        supabase.from("voice_note_project_events").insert(eventInserts)
+      );
     }
 
     /* --------------------------------------------------
        PHASE 6: CREATE ACTION ITEM (IF ACTIONABLE)
        Implements confidence routing + critical keyword
-       detection per DECISIONS_AND_REQUIREMENTS.md §7.2
+       detection per DECISIONS_AND_REQUIREMENTS.md
     -------------------------------------------------- */
     console.log("[6] Evaluating action item creation...");
 
@@ -425,7 +947,6 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
       let reviewStatus: string | null = null;
 
       if (isCritical) {
-        // Critical override: always needs review, force high priority
         needsReview = true;
         reviewStatus = 'pending_review';
         console.log("[6] CRITICAL keywords detected — forcing action item creation");
@@ -443,7 +964,6 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
       dbOperations.push(
         supabase.from("action_items").insert({
           voice_note_id: voiceNoteId,
-          // Critical override: force 'action_required' if original intent was update/information
           category: actionCategory || 'action_required',
           summary: finalShortSummary,
           details: finalDetailedSummary,
@@ -453,7 +973,6 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
           account_id: voiceNote.account_id,
           user_id: voiceNote.user_id,
           assigned_to: managerId,
-          // New confidence/review columns
           confidence_score: confidenceScore,
           needs_review: needsReview,
           review_status: reviewStatus,
@@ -461,8 +980,8 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
           ai_analysis: JSON.stringify({
             intent: finalIntent,
             confidence_score: confidenceScore,
-            prompt_version: analysisPrompt.version,
-            model: providerName === 'groq' ? 'llama-3.3-70b' : 'gpt-4o-mini',
+            prompt_version: analysisPrompt?.version || 0,
+            model: aiModelName,
             extracted_items: {
               materials: ai.materials?.length || 0,
               labor: ai.labor?.length || 0,
@@ -490,18 +1009,17 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
             reference_type: 'voice_note',
           })
         );
-        console.log("✓ Critical notification created for manager");
+        console.log("✓ Critical notification queued for manager");
       }
 
-      console.log(`✓ Action item created (critical=${isCritical}, confidence=${confidenceScore}, needs_review=${needsReview})`);
+      console.log(`✓ Action item queued (critical=${isCritical}, confidence=${confidenceScore}, needs_review=${needsReview})`);
     } else {
       console.log(`[6] No action item needed (intent=${finalIntent}, ambient update or information)`);
     }
 
     // 5.3: Update voice note to completed status
-    // FIXED: Build proper format for all transcript fields
     const languageName = LANGUAGE_NAMES[detectedLangCode] || detectedLangCode.toUpperCase();
-    
+
     // Build legacy 'transcription' field for compatibility
     let legacyTranscription = '';
     if (detectedLangCode === 'en') {
@@ -510,49 +1028,41 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
       legacyTranscription = `[${languageName}] ${transcriptRaw}\n\n[English] ${transcriptEn}`;
     }
 
-    // FIXED: Build translated_transcription JSONB correctly
-    // This should store English translation, not all languages
+    // Build translated_transcription JSONB correctly
     const translatedTranscriptions: { [key: string]: string } = {
-      'en': transcriptEn  // FIXED: English translation is stored here
+      'en': transcriptEn
     };
 
-    // CRITICAL FIX: Check if original fields are already set to avoid modification error
-    const { data: currentVoiceNote } = await supabase
-      .from("voice_notes")
-      .select("transcript_raw_original, transcript_en_original")
-      .eq("id", voiceNoteId)
-      .single();
-
-    // Build update payload - only include original fields if they're not set
+    // Build final update payload — uses in-memory flags from Phase 1 (no extra DB read)
     const finalUpdatePayload: any = {
       status: 'completed',
       category: finalIntent,
-      
+
       // Always update current and final fields
-      transcript_raw_current: transcriptRaw,   // Current native (no edits yet)
-      transcript_en_current: transcriptEn,     // Current English (no edits yet)
-      transcript_final: transcriptEn,          // Final approved text (English)
-      
+      transcript_raw_current: transcriptRaw,
+      transcript_en_current: transcriptEn,
+      transcript_final: transcriptEn,
+
       // Legacy fields for backward compatibility
-      transcription: legacyTranscription,      // Formatted for UI display
-      transcript_raw: transcriptRaw,           // Legacy raw field
-      
-      // FIXED: translated_transcription should be English only
+      transcription: legacyTranscription,
+      transcript_raw: transcriptRaw,
+
+      // Translated transcription
       translated_transcription: translatedTranscriptions,
-      
+
       // Language detection fields
-      detected_language: languageName,         // Human-readable
-      detected_language_code: detectedLangCode, // ISO code
-      
-      // FIXED: ASR confidence now populated
+      detected_language: languageName,
+      detected_language_code: detectedLangCode,
+
+      // ASR confidence
       asr_confidence: asrConfidence || null
     };
 
-    // CRITICAL: Only set original fields if they don't exist (immutable)
-    if (!currentVoiceNote?.transcript_raw_original) {
+    // CRITICAL: Only set original fields if they don't exist (immutable — from Phase 1 data)
+    if (!hasOriginalRaw) {
       finalUpdatePayload.transcript_raw_original = transcriptRaw;
     }
-    if (!currentVoiceNote?.transcript_en_original) {
+    if (!hasOriginalEn) {
       finalUpdatePayload.transcript_en_original = transcriptEn;
     }
 
@@ -561,164 +1071,66 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
     );
 
     /* --------------------------------------------------
-       PHASE 7: EXECUTE ALL WRITES ATOMICALLY
+       PHASE 7: EXECUTE ALL DB WRITES IN PARALLEL
+       Promise.all for maximum throughput.
+       Entity inserts are batched per table (single insert per type).
     -------------------------------------------------- */
-    console.log("[7] Executing batch write...");
-    
+    console.log(`[7] Executing ${dbOperations.length} DB writes in parallel...`);
+    const writeStart = performance.now();
+
     const results = await Promise.all(dbOperations);
-    const firstError = results.find(r => r.error);
-    
-    if (firstError) {
-      throw new Error(`Database operation failed: ${firstError.error.message}`);
+
+    // Check for errors in any operation
+    for (let i = 0; i < results.length; i++) {
+      if (results[i]?.error) {
+        console.error(`Database operation ${i + 1} failed: ${results[i].error.message}`);
+        throw new Error(`Database operation ${i + 1} failed: ${results[i].error.message}`);
+      }
     }
 
-    console.log("✓ All data written successfully");
+    console.log(`  ✓ All ${dbOperations.length} writes completed in ${(performance.now() - writeStart).toFixed(0)}ms`);
+
+    const totalTime = performance.now() - pipelineStart;
     console.log(`✓ Fields populated: transcript_raw_original=${!!transcriptRaw}, transcript_en_original=${!!transcriptEn}, asr_confidence=${asrConfidence}`);
-    console.log("=== Processing Complete ===");
+    console.log(`=== Processing Complete in ${(totalTime / 1000).toFixed(2)}s ===`);
 
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         success: true,
         voice_note_id: voiceNoteId,
+        provider: providerName,
         intent: finalIntent,
         priority: finalPriority,
-        action_created: !!actionCategory,
-        asr_confidence: asrConfidence
-      }), 
+        action_created: !!shouldCreateAction,
+        asr_confidence: asrConfidence,
+        processing_time_ms: Math.round(totalTime)
+      }),
       { status: 200, headers: corsHeaders }
     );
 
   } catch (err: any) {
-    console.error("❌ FATAL ERROR:", err.message);
+    const totalTime = performance.now() - pipelineStart;
+    console.error(`FATAL ERROR after ${(totalTime / 1000).toFixed(2)}s:`, err.message);
     console.error(err.stack);
-    
+
+    // Try to update voice note status to 'error' so it can be retried
+    if (voiceNoteId && supabase) {
+      try {
+        await supabase.from("voice_notes").update({
+          status: 'error',
+        }).eq("id", voiceNoteId);
+        console.log("Voice note marked as 'error' for retry");
+      } catch (_) {
+        // Best effort - don't let this secondary failure mask the original
+      }
+    }
+
     return new Response(
-      JSON.stringify({ 
-        error: err.message,
-        stack: err.stack 
-      }), 
+      JSON.stringify({
+        error: err.message
+        // Security: No stack trace in response
+      }),
       { status: 500, headers: corsHeaders }
     );
   }
 });
-
-/* ============================================================
-   HELPER FUNCTIONS
-============================================================ */
-
-/**
- * Performs ASR using Groq or OpenAI Whisper
- * FIXED: Now returns confidence score
- */
-async function performASR(provider: string, key: string, audioUrl: string) {
-  console.log(`  → Fetching audio from storage...`);
-  const audioRes = await fetch(audioUrl);
-  if (!audioRes.ok) {
-    throw new Error(`Failed to fetch audio: ${audioRes.statusText}`);
-  }
-
-  const audioBlob = await audioRes.blob();
-  const formData = new FormData();
-  formData.append('file', new File([audioBlob], 'audio.webm'));
-  formData.append(
-    'model', 
-    provider === 'groq' ? 'whisper-large-v3' : 'whisper-1'
-  );
-  formData.append('response_format', 'verbose_json');
-
-  const endpoint = provider === 'groq' 
-    ? 'https://api.groq.com/openai/v1/audio/transcriptions'
-    : 'https://api.openai.com/v1/audio/transcriptions';
-
-  console.log(`  → Calling ${provider} Whisper API...`);
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}` },
-    body: formData
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(`ASR failed: ${data.error?.message}`);
-  }
-
-  // FIXED: Extract confidence score from segments
-  let confidence = null;
-  if (data.segments && data.segments.length > 0) {
-    // Calculate average confidence across all segments
-    const avgConfidence = data.segments.reduce((sum: number, seg: any) => {
-      return sum + (seg.avg_logprob || seg.confidence || 0);
-    }, 0) / data.segments.length;
-    
-    // Convert log probability to 0-1 confidence if needed
-    confidence = avgConfidence < 0 ? Math.exp(avgConfidence) : avgConfidence;
-  }
-
-  return { 
-    text: data.text, 
-    language: data.language,
-    confidence: confidence  // FIXED: Return confidence score
-  };
-}
-
-/**
- * Calls LLM with registry-based prompts
- */
-async function callRegistryLLM(
-  provider: string, 
-  key: string, 
-  options: { 
-    prompt: string, 
-    context?: string, 
-    isJson: boolean 
-  }
-) {
-  const baseUrl = provider === 'groq' 
-    ? 'https://api.groq.com/openai/v1'
-    : 'https://api.openai.com/v1';
-  
-  const model = provider === 'groq' 
-    ? 'llama-3.3-70b-versatile'
-    : 'gpt-4o-mini';
-
-  let systemPrompt = options.prompt;
-  
-  // Ensure JSON mode is explicit
-  if (options.isJson && !systemPrompt.toLowerCase().includes('json')) {
-    systemPrompt += "\n\nReturn the output in valid JSON format.";
-  }
-
-  const messages = [{ role: 'system', content: systemPrompt }];
-  if (options.context) {
-    messages.push({ role: 'user', content: options.context });
-  }
-
-  console.log(`  → Calling ${provider} LLM (${model})...`);
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { 
-      'Authorization': `Bearer ${key}`, 
-      'Content-Type': 'application/json' 
-    },
-    body: JSON.stringify({ 
-      model, 
-      messages, 
-      response_format: options.isJson ? { type: "json_object" } : undefined,
-      temperature: 0.1 
-    })
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(`LLM call failed: ${data.error?.message}`);
-  }
-
-  const content = data.choices[0].message.content;
-  
-  try {
-    return options.isJson ? JSON.parse(content) : content;
-  } catch (e) {
-    console.error("Invalid JSON from AI:", content);
-    throw new Error("AI returned invalid JSON");
-  }
-}
