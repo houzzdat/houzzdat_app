@@ -29,6 +29,9 @@ class _FeedTabState extends State<FeedTab> {
   bool _isReplying = false;
   String? _replyToId;
 
+  // Acknowledged IDs (local tracking for instant UI feedback)
+  final Set<String> _acknowledgedIds = {};
+
   Stream<List<Map<String, dynamic>>> _getVoiceNotesStream() {
     if (widget.accountId == null || widget.accountId!.isEmpty) {
       return Stream.value([]);
@@ -105,6 +108,179 @@ class _FeedTabState extends State<FeedTab> {
       _selectedUserId = null;
       _selectedDate = null;
     });
+  }
+
+  // ─── Ambient Update Handlers (Step 6D) ──────────────────────
+
+  Future<void> _handleAcknowledge(Map<String, dynamic> note) async {
+    final noteId = note['id']?.toString();
+    if (noteId == null) return;
+
+    try {
+      await _supabase.from('voice_notes').update({
+        'acknowledged_by': _supabase.auth.currentUser?.id,
+        'acknowledged_at': DateTime.now().toIso8601String(),
+      }).eq('id', noteId);
+
+      setState(() => _acknowledgedIds.add(noteId));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Update acknowledged'),
+            backgroundColor: AppTheme.successGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error acknowledging note: $e');
+    }
+  }
+
+  Future<void> _handleAddNoteToVoiceNote(Map<String, dynamic> note) async {
+    final controller = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Note'),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            hintText: 'Enter your note about this update...',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryIndigo),
+            child: const Text('Save', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (text != null && text.isNotEmpty) {
+      try {
+        await _supabase.from('voice_note_project_events').insert({
+          'voice_note_id': note['id'],
+          'project_id': note['project_id'],
+          'account_id': widget.accountId,
+          'user_id': _supabase.auth.currentUser?.id,
+          'event_type': 'manager_note',
+          'content': text,
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Note added to update'),
+              backgroundColor: AppTheme.successGreen,
+            ),
+          );
+        }
+      } catch (e) {
+        debugPrint('Error adding note: $e');
+      }
+    }
+  }
+
+  Future<void> _handleCreateActionFromNote(Map<String, dynamic> note) async {
+    // Show dialog to pick category and priority
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (ctx) {
+        String category = 'action_required';
+        String priority = 'Med';
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            title: const Text('Create Action Item'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Category:', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                DropdownButtonFormField<String>(
+                  value: category,
+                  items: const [
+                    DropdownMenuItem(value: 'action_required', child: Text('Action Required')),
+                    DropdownMenuItem(value: 'approval', child: Text('Approval')),
+                  ],
+                  onChanged: (v) => setDialogState(() => category = v ?? category),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text('Priority:', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                DropdownButtonFormField<String>(
+                  value: priority,
+                  items: const [
+                    DropdownMenuItem(value: 'High', child: Text('High')),
+                    DropdownMenuItem(value: 'Med', child: Text('Medium')),
+                    DropdownMenuItem(value: 'Low', child: Text('Low')),
+                  ],
+                  onChanged: (v) => setDialogState(() => priority = v ?? priority),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, {
+                  'category': category,
+                  'priority': priority,
+                }),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryIndigo),
+                child: const Text('Create', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (result == null) return;
+
+    try {
+      await _supabase.from('action_items').insert({
+        'voice_note_id': note['id'],
+        'project_id': note['project_id'],
+        'account_id': widget.accountId,
+        'user_id': note['user_id'],
+        'category': result['category'],
+        'priority': result['priority'],
+        'status': 'pending',
+        'summary': note['transcript'] ?? note['transcript_final'] ?? 'Action from voice note',
+        'ai_analysis': note['ai_analysis'],
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Action item created from update'),
+            backgroundColor: AppTheme.successGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error creating action: $e');
+    }
   }
 
   VoiceNoteCardViewModel _createViewModel(Map<String, dynamic> note) {
@@ -185,8 +361,14 @@ class _FeedTabState extends State<FeedTab> {
                     children: [
                       VoiceNoteCard(
                         viewModel: _createViewModel(note),
+                        note: note,
                         isReplying: isReplying,
                         onReply: () => _handleReply(note),
+                        onAcknowledge: () => _handleAcknowledge(note),
+                        onAddNote: () => _handleAddNoteToVoiceNote(note),
+                        onCreateAction: () => _handleCreateActionFromNote(note),
+                        isAcknowledged: _acknowledgedIds.contains(note['id']?.toString()) ||
+                            note['acknowledged_by'] != null,
                       ),
                       if (isReplying)
                         Padding(

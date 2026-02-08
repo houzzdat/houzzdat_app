@@ -15,13 +15,23 @@ class VoiceNoteCard extends StatefulWidget {
   final bool isReplying;
   final VoidCallback onReply;
 
+  // Manager ambient update actions (Step 6)
+  final VoidCallback? onAcknowledge;
+  final VoidCallback? onAddNote;
+  final VoidCallback? onCreateAction;
+  final bool isAcknowledged;
+
   const VoiceNoteCard({
     super.key,
     this.viewModel,
     this.note,
     required this.isReplying,
     required this.onReply,
-  }) : assert(viewModel != null || note != null, 
+    this.onAcknowledge,
+    this.onAddNote,
+    this.onCreateAction,
+    this.isAcknowledged = false,
+  }) : assert(viewModel != null || note != null,
                'Either viewModel or note must be provided');
 
   @override
@@ -218,6 +228,12 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
               else
                 _buildCollapsedTranscription(),
 
+              // Manager ambient actions (ACK / ADD NOTE / CREATE ACTION)
+              if (widget.onAcknowledge != null ||
+                  widget.onAddNote != null ||
+                  widget.onCreateAction != null)
+                _buildManagerActions(),
+
               // Reply Button
               _buildReplyButton(),
             ],
@@ -261,6 +277,21 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
                     const CategoryBadge(
                       text: 'REPLY',
                       color: AppTheme.infoBlue,
+                    ),
+                  ],
+                  if (widget.note?['intent'] == 'update') ...[
+                    const SizedBox(width: AppTheme.spacingS),
+                    const CategoryBadge(
+                      text: 'UPDATE',
+                      color: AppTheme.successGreen,
+                    ),
+                  ],
+                  if (widget.isAcknowledged) ...[
+                    const SizedBox(width: AppTheme.spacingS),
+                    const CategoryBadge(
+                      text: 'ACK\'D',
+                      color: AppTheme.successGreen,
+                      icon: Icons.check_circle,
                     ),
                   ],
                   if (isEdited) ...[
@@ -436,6 +467,58 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
       transcription: _getTranscription(),
       status: status,
       isEdited: isEdited,
+    );
+  }
+
+  Widget _buildManagerActions() {
+    return Padding(
+      padding: const EdgeInsets.only(top: AppTheme.spacingM),
+      child: Row(
+        children: [
+          if (widget.onAcknowledge != null && !widget.isAcknowledged)
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.check, size: 16),
+                label: const Text('ACK', style: TextStyle(fontSize: 11)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.successGreen,
+                  side: const BorderSide(color: AppTheme.successGreen),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                ),
+                onPressed: widget.onAcknowledge,
+              ),
+            ),
+          if (widget.onAcknowledge != null && !widget.isAcknowledged)
+            const SizedBox(width: AppTheme.spacingS),
+          if (widget.onAddNote != null)
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.note_add, size: 16),
+                label: const Text('ADD NOTE', style: TextStyle(fontSize: 11)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.infoBlue,
+                  side: const BorderSide(color: AppTheme.infoBlue),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                ),
+                onPressed: widget.onAddNote,
+              ),
+            ),
+          if (widget.onAddNote != null)
+            const SizedBox(width: AppTheme.spacingS),
+          if (widget.onCreateAction != null)
+            Expanded(
+              child: TextButton.icon(
+                icon: const Icon(Icons.add_task, size: 16),
+                label: const Text('CREATE ACTION', style: TextStyle(fontSize: 11)),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.primaryIndigo,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                ),
+                onPressed: widget.onCreateAction,
+              ),
+            ),
+        ],
+      ),
     );
   }
 

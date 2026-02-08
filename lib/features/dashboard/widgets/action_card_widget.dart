@@ -7,19 +7,26 @@ import 'package:houzzdat_app/features/voice_notes/widgets/transcription_display.
 import 'package:image_picker/image_picker.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/instruct_voice_dialog.dart';
 
-/// Enhanced Action Card implementing full SiteVoice Manager Action Lifecycle
-/// - Contextual surface actions based on category
-/// - Proof-of-Work verification flow
-/// - Complete interaction history tracking
-/// - State machine enforcement
+/// Two-Tier Action Card implementing full SiteVoice Manager Action Lifecycle
+/// - Collapsed 4-line card with priority border, pills, summary, sender, actions
+/// - Expanded detail view with audio, transcript, AI analysis, confidence, proof
+/// - Accordion support (max 1 expanded) via expandedCardId/onExpandChanged
+/// - Needs-review variant for AI-suggested items (CONFIRM/EDIT/DISMISS)
+/// - Structured approval card with extracted data + APPROVE WITH NOTE
 class ActionCardWidget extends StatefulWidget {
   final Map<String, dynamic> item;
   final VoidCallback onRefresh;
+  final Color? stageColor;
+  final String? expandedCardId;
+  final ValueChanged<String?>? onExpandChanged;
 
   const ActionCardWidget({
     super.key,
     required this.item,
     required this.onRefresh,
+    this.stageColor,
+    this.expandedCardId,
+    this.onExpandChanged,
   });
 
   @override
@@ -29,38 +36,146 @@ class ActionCardWidget extends StatefulWidget {
 class _ActionCardWidgetState extends State<ActionCardWidget> {
   final _supabase = Supabase.instance.client;
   final _imagePicker = ImagePicker();
-  bool _isExpanded = false;
+
+  // Voice note + interaction state (preserved)
   Map<String, dynamic>? _voiceNote;
   List<Map<String, dynamic>> _interactionHistory = [];
   bool _isLoading = false;
+
+  // Two-tier state
+  bool _localExpanded = false;
+  String? _senderName;
+  String? _projectName;
+
+  // Approval details (Step 4)
+  Map<String, dynamic>? _approvalDetails;
+  List<Map<String, dynamic>> _materialRequests = [];
+
+  bool get _isExpanded => widget.onExpandChanged != null
+      ? widget.expandedCardId == widget.item['id']
+      : _localExpanded;
 
   @override
   void initState() {
     super.initState();
     if (widget.item['interaction_history'] != null) {
       _interactionHistory = List<Map<String, dynamic>>.from(
-        widget.item['interaction_history'] as List
+        widget.item['interaction_history'] as List,
       );
     }
+    _loadSenderInfo();
+    _loadProjectName();
+    if (widget.item['category'] == 'approval') _loadApprovalDetails();
+  }
+
+  @override
+  void didUpdateWidget(covariant ActionCardWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Load voice note when accordion-expanding via external control
+    if (widget.expandedCardId == widget.item['id'] &&
+        oldWidget.expandedCardId != widget.item['id'] &&
+        _voiceNote == null) {
+      _loadVoiceNote();
+    }
+  }
+
+  // ─── Helper Methods ───────────────────────────────────────────
+
+  String _getRelativeTime() {
+    final createdAt = widget.item['created_at'];
+    if (createdAt == null) return '';
+    try {
+      final created = DateTime.parse(createdAt);
+      final diff = DateTime.now().difference(created);
+      if (diff.inMinutes < 1) return 'now';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+      if (diff.inHours < 24) return '${diff.inHours}h ago';
+      if (diff.inDays < 7) return '${diff.inDays}d ago';
+      return '${created.day}/${created.month}';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Color _getPriorityColor() {
+    switch ((widget.item['priority'] ?? 'Med').toString().toLowerCase()) {
+      case 'high':
+        return AppTheme.errorRed;
+      case 'med':
+      case 'medium':
+        return AppTheme.warningOrange;
+      case 'low':
+        return AppTheme.successGreen;
+      default:
+        return AppTheme.textSecondary;
+    }
+  }
+
+  double? _getConfidenceScore() {
+    final score = widget.item['confidence_score'];
+    if (score != null) return double.tryParse(score.toString());
+    final analysis = widget.item['ai_analysis'];
+    if (analysis is Map && analysis['confidence_score'] != null) {
+      return double.tryParse(analysis['confidence_score'].toString());
+    }
+    return null;
   }
 
   Color _getCategoryColor() {
     switch (widget.item['category']) {
-      case 'action_required': return AppTheme.errorRed;
-      case 'approval': return AppTheme.warningOrange;
-      case 'update': return AppTheme.successGreen;
-      default: return AppTheme.textSecondary;
+      case 'action_required':
+        return AppTheme.errorRed;
+      case 'approval':
+        return AppTheme.warningOrange;
+      case 'update':
+        return AppTheme.successGreen;
+      default:
+        return AppTheme.textSecondary;
     }
   }
 
   String _getCategoryLabel() {
     switch (widget.item['category']) {
-      case 'action_required': return 'ACTION REQUIRED';
-      case 'approval': return 'APPROVAL';
-      case 'update': return 'UPDATE';
-      default: return 'OTHER';
+      case 'action_required':
+        return 'ACTION REQUIRED';
+      case 'approval':
+        return 'APPROVAL';
+      case 'update':
+        return 'UPDATE';
+      default:
+        return 'OTHER';
     }
   }
+
+  IconData _getInteractionIcon(String? action) {
+    switch (action) {
+      case 'approved':
+      case 'approved_with_note':
+        return Icons.check_circle;
+      case 'denied':
+        return Icons.cancel;
+      case 'instructed':
+        return Icons.mic;
+      case 'forwarded':
+        return Icons.forward;
+      case 'resolved':
+        return Icons.done_all;
+      case 'acknowledged':
+        return Icons.check;
+      case 'proof_uploaded':
+        return Icons.camera_alt;
+      case 'note_added':
+        return Icons.note_add;
+      case 'review_confirmed':
+        return Icons.verified;
+      case 'review_dismissed':
+        return Icons.remove_circle;
+      default:
+        return Icons.history;
+    }
+  }
+
+  // ─── Data Loading ─────────────────────────────────────────────
 
   Future<void> _loadVoiceNote() async {
     if (_voiceNote != null || widget.item['voice_note_id'] == null) return;
@@ -78,7 +193,56 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// Add interaction to history and update database
+  Future<void> _loadSenderInfo() async {
+    final userId = widget.item['user_id'];
+    if (userId == null) return;
+    try {
+      final data = await _supabase
+          .from('users')
+          .select('full_name')
+          .eq('id', userId)
+          .single();
+      if (mounted) setState(() => _senderName = data['full_name']?.toString() ?? 'Unknown');
+    } catch (_) {}
+  }
+
+  Future<void> _loadProjectName() async {
+    final projectId = widget.item['project_id'];
+    if (projectId == null) return;
+    try {
+      final data = await _supabase
+          .from('projects')
+          .select('name')
+          .eq('id', projectId)
+          .single();
+      if (mounted) setState(() => _projectName = data['name']?.toString() ?? 'Unknown');
+    } catch (_) {}
+  }
+
+  Future<void> _loadApprovalDetails() async {
+    final voiceNoteId = widget.item['voice_note_id'];
+    if (voiceNoteId == null) return;
+    try {
+      final approval = await _supabase
+          .from('voice_note_approvals')
+          .select()
+          .eq('voice_note_id', voiceNoteId)
+          .maybeSingle();
+      final materials = await _supabase
+          .from('voice_note_material_requests')
+          .select()
+          .eq('voice_note_id', voiceNoteId);
+      if (mounted) {
+        setState(() {
+          _approvalDetails = approval;
+          _materialRequests = List<Map<String, dynamic>>.from(materials);
+        });
+      }
+    } catch (_) {}
+  }
+
+  // ─── Interaction Recording (preserved) ────────────────────────
+
   Future<void> _recordInteraction(String action, String details) async {
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null) return;
@@ -107,12 +271,11 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// Enforce state machine transitions
-  /// Set [bypassProofGate] to true for actions that don't require proof (deny, acknowledge)
+  // ─── Status Transitions (preserved) ───────────────────────────
+
   Future<bool> _updateStatus(String newStatus, {bool bypassProofGate = false}) async {
     final currentStatus = widget.item['status'] ?? 'pending';
 
-    // Define valid transitions
     final validTransitions = {
       'pending': ['in_progress', 'completed'],
       'in_progress': ['verifying', 'completed'],
@@ -124,7 +287,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Invalid transition: $currentStatus → $newStatus'),
+            content: Text('Invalid transition: $currentStatus \u2192 $newStatus'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -132,7 +295,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       return false;
     }
 
-    // Proof gate: block completion if proof is required but not uploaded
     if (newStatus == 'completed' &&
         !bypassProofGate &&
         widget.item['requires_proof'] == true &&
@@ -185,7 +347,8 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// APPROVE action
+  // ─── Action Handlers ──────────────────────────────────────────
+
   Future<void> _handleApprove() async {
     await _recordInteraction('approved', 'Manager approved this action');
     final success = await _updateStatus('in_progress');
@@ -202,14 +365,116 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// DENY action — bypasses proof gate (denial doesn't need evidence)
-  Future<void> _handleDeny() async {
-    await _recordInteraction('denied', 'Manager denied this request');
-    await _updateStatus('completed', bypassProofGate: true);
-    widget.onRefresh();
+  /// APPROVE WITH NOTE — approval with conditions (Step 4D)
+  Future<void> _handleApproveWithNote() async {
+    final controller = TextEditingController();
+    final note = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Approve with Conditions'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Add conditions or notes for this approval:',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+            ),
+            const SizedBox(height: AppTheme.spacingM),
+            TextField(
+              controller: controller,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'e.g. Approved for max Rs 40,000 only...',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successGreen),
+            child: const Text('Approve', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (note != null && note.isNotEmpty) {
+      await _recordInteraction('approved_with_note', 'Approved with note: $note');
+      final success = await _updateStatus('in_progress');
+      if (success) {
+        await _supabase
+            .from('action_items')
+            .update({
+              'manager_approval': true,
+              'approved_by': _supabase.auth.currentUser?.id,
+              'approved_at': DateTime.now().toIso8601String(),
+            })
+            .eq('id', widget.item['id']);
+        widget.onRefresh();
+      }
+    }
   }
 
-  /// INSTRUCT action - record voice note back to original sender
+  /// DENY action — mandatory reason (Step 4E)
+  Future<void> _handleDeny() async {
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Deny Request'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Please provide a reason for denial:',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+            ),
+            const SizedBox(height: AppTheme.spacingM),
+            TextField(
+              controller: controller,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Reason for denial (required)...',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                Navigator.pop(ctx, controller.text.trim());
+              } else {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('A reason is required to deny')),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorRed),
+            child: const Text('Deny', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (reason != null && reason.isNotEmpty) {
+      await _recordInteraction('denied', 'Denied with reason: $reason');
+      await _updateStatus('completed', bypassProofGate: true);
+      widget.onRefresh();
+    }
+  }
+
   Future<void> _handleInstruct() async {
     final result = await Navigator.push<bool>(
       context,
@@ -234,12 +499,10 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// FORWARD action - delegate to another user with optional note
   Future<void> _handleForward() async {
     final selectedUser = await _showForwardSheet();
     if (selectedUser == null) return;
 
-    // Show optional note dialog
     final noteController = TextEditingController();
     final forwardNote = await showDialog<String>(
       context: context,
@@ -278,10 +541,8 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       ),
     );
 
-    // User cancelled the note dialog entirely
     if (forwardNote == null) return;
 
-    // Update action item
     await _supabase
         .from('action_items')
         .update({
@@ -290,7 +551,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
         })
         .eq('id', widget.item['id']);
 
-    // Record in voice_note_forwards for forwarding chain
     if (widget.item['voice_note_id'] != null) {
       try {
         await _supabase.from('voice_note_forwards').insert({
@@ -304,7 +564,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       }
     }
 
-    // Create notification for the forwarded user
     try {
       await _supabase.from('notifications').insert({
         'user_id': selectedUser,
@@ -338,21 +597,18 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// RESOLVE action - for Action Required items
   Future<void> _handleResolve() async {
     await _recordInteraction('resolved', 'Manager marked as resolved');
     await _updateStatus('completed');
     widget.onRefresh();
   }
 
-  /// ACKNOWLEDGE action - for Updates (bypasses proof gate — updates never need proof)
   Future<void> _handleAcknowledge() async {
     await _recordInteraction('acknowledged', 'Manager acknowledged this update');
     await _updateStatus('completed', bypassProofGate: true);
     widget.onRefresh();
   }
 
-  /// INQUIRE action - request more information via voice recording
   Future<void> _handleInquire() async {
     final result = await Navigator.push<bool>(
       context,
@@ -368,7 +624,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// ADD NOTE action - for Update category items (no status change)
   Future<void> _handleAddNote() async {
     final controller = TextEditingController();
     final note = await showDialog<String>(
@@ -412,7 +667,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// Proof-of-Work upload
   Future<void> _handleProofUpload() async {
     final image = await _imagePicker.pickImage(source: ImageSource.camera);
     if (image == null) return;
@@ -453,7 +707,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// Complete & Log - final archival
   Future<void> _handleCompleteAndLog() async {
     await _recordInteraction('completed_and_logged', 'Manager archived this action');
     await _updateStatus('completed');
@@ -469,7 +722,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// Update priority
   Future<void> _handlePriorityChange(String priority) async {
     await _supabase
         .from('action_items')
@@ -480,7 +732,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     widget.onRefresh();
   }
 
-  /// Edit summary text
   Future<void> _handleEditSummary() async {
     final controller = TextEditingController(text: widget.item['summary'] ?? '');
     final newSummary = await showDialog<String>(
@@ -524,7 +775,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// Escalate to Owner - creates an owner_approvals entry
   Future<void> _handleEscalateToOwner() async {
     final projectId = widget.item['project_id'];
     final accountId = widget.item['account_id'];
@@ -543,7 +793,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
 
     try {
-      // 1. Look up owner for this project
       final ownerResult = await _supabase
           .from('project_owners')
           .select('owner_id')
@@ -564,12 +813,9 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       }
 
       final ownerId = ownerResult['owner_id'] as String;
-
-      // 2. Show category selection dialog
       final category = await _showEscalationCategoryDialog();
       if (category == null) return;
 
-      // 3. Create owner_approvals entry
       await _supabase.from('owner_approvals').insert({
         'project_id': projectId,
         'account_id': accountId,
@@ -582,7 +828,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
         'action_item_id': widget.item['id'],
       });
 
-      // 4. Record interaction
       await _recordInteraction(
         'escalated_to_owner',
         'Escalated to owner for $category review',
@@ -602,8 +847,8 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       debugPrint('Error escalating to owner: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Something went wrong. Please try again.'),
+          const SnackBar(
+            content: Text('Something went wrong. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -611,7 +856,35 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
-  /// Show dialog to pick escalation category
+  // ─── Review Handlers (Step 3E) ────────────────────────────────
+
+  Future<void> _handleConfirmReview() async {
+    final userId = _supabase.auth.currentUser?.id;
+    await _supabase.from('action_items').update({
+      'needs_review': false,
+      'review_status': 'confirmed',
+      'reviewed_by': userId,
+      'reviewed_at': DateTime.now().toIso8601String(),
+    }).eq('id', widget.item['id']);
+    await _recordInteraction('review_confirmed', 'Manager confirmed AI-suggested action');
+    widget.onRefresh();
+  }
+
+  Future<void> _handleDismissReview() async {
+    final userId = _supabase.auth.currentUser?.id;
+    await _supabase.from('action_items').update({
+      'needs_review': false,
+      'review_status': 'dismissed',
+      'reviewed_by': userId,
+      'reviewed_at': DateTime.now().toIso8601String(),
+      'status': 'completed',
+    }).eq('id', widget.item['id']);
+    await _recordInteraction('review_dismissed', 'Manager dismissed AI-suggested action');
+    widget.onRefresh();
+  }
+
+  // ─── UI Dialogs (preserved) ───────────────────────────────────
+
   Future<String?> _showEscalationCategoryDialog() async {
     return showDialog<String>(
       context: context,
@@ -663,7 +936,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     );
   }
 
-  /// Show secondary actions menu (Double Burger)
   void _showSecondaryActions() {
     showModalBottomSheet(
       context: context,
@@ -750,7 +1022,6 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     );
   }
 
-  /// Show stakeholder trail (interaction history)
   void _showStakeholderTrail() {
     showModalBottomSheet(
       context: context,
@@ -824,179 +1095,83 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     );
   }
 
-  /// Get contextual surface actions based on category
+  // ─── Surface Actions ──────────────────────────────────────────
+
+  // Compact outlined button matching the design mockup (text-only, no icon)
+  Widget _actionBtn(String label, Color color, VoidCallback onPressed) {
+    return Expanded(
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: color,
+          side: BorderSide(color: color.withValues(alpha: 0.5)),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          minimumSize: const Size(0, 32),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
   List<Widget> _getSurfaceActions() {
     final status = widget.item['status'] ?? 'pending';
     final category = widget.item['category'];
 
-    // If in verification phase, show verify/reject actions
+    // Verification phase
     if (status == 'verifying') {
       return [
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.check_circle, size: 16),
-            label: const Text('VERIFY & COMPLETE', style: TextStyle(fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.successGreen,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: _handleCompleteAndLog,
-          ),
-        ),
-        const SizedBox(width: AppTheme.spacingS),
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.cancel, size: 16),
-            label: const Text('REJECT', style: TextStyle(fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.errorRed,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              await _recordInteraction('proof_rejected', 'Proof rejected, sent back to in_progress');
-              await _updateStatus('in_progress');
-              widget.onRefresh();
-            },
-          ),
-        ),
+        _actionBtn('VERIFY', AppTheme.successGreen, _handleCompleteAndLog),
+        const SizedBox(width: 6),
+        _actionBtn('REJECT', AppTheme.errorRed, () async {
+          await _recordInteraction('proof_rejected', 'Proof rejected, sent back to in_progress');
+          await _updateStatus('in_progress');
+          widget.onRefresh();
+        }),
       ];
     }
 
-    // If in progress and assigned, show proof upload option
+    // In progress with assignment — proof upload
     if (status == 'in_progress' && widget.item['assigned_to'] != null) {
       return [
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.camera_alt, size: 16),
-            label: const Text('UPLOAD PROOF', style: TextStyle(fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.infoBlue,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: _handleProofUpload,
-          ),
-        ),
+        _actionBtn('UPLOAD PROOF', AppTheme.infoBlue, _handleProofUpload),
       ];
     }
 
-    // Show contextual actions for pending items based on category
+    // Pending items — category-specific actions
     if (status == 'pending') {
       switch (category) {
         case 'approval':
           return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.check_circle, size: 16),
-                label: const Text('APPROVE', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleApprove,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.help_outline, size: 16),
-                label: const Text('INQUIRE', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.infoBlue,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleInquire,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.cancel, size: 16),
-                label: const Text('DENY', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.errorRed,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleDeny,
-              ),
-            ),
+            _actionBtn('APPROVE', AppTheme.successGreen, _handleApprove),
+            const SizedBox(width: 6),
+            _actionBtn('WITH NOTE', AppTheme.infoBlue, _handleApproveWithNote),
+            const SizedBox(width: 6),
+            _actionBtn('DENY', AppTheme.errorRed, _handleDeny),
           ];
 
         case 'action_required':
           return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.mic, size: 16),
-                label: const Text('INSTRUCT', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.infoBlue,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleInstruct,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.forward, size: 16),
-                label: const Text('FORWARD', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.warningOrange,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleForward,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.done_all, size: 16),
-                label: const Text('RESOLVE', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleResolve,
-              ),
-            ),
+            _actionBtn('INSTRUCT', AppTheme.infoBlue, _handleInstruct),
+            const SizedBox(width: 6),
+            _actionBtn('FORWARD', AppTheme.warningOrange, _handleForward),
+            const SizedBox(width: 6),
+            _actionBtn('RESOLVE', AppTheme.successGreen, _handleResolve),
           ];
 
         case 'update':
           return [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.check, size: 16),
-                label: const Text('ACK', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successGreen,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleAcknowledge,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.note_add, size: 16),
-                label: const Text('ADD NOTE', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.infoBlue,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleAddNote,
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingS),
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.forward, size: 16),
-                label: const Text('FORWARD', style: TextStyle(fontSize: 11)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.warningOrange,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _handleForward,
-              ),
-            ),
+            _actionBtn('ACK', AppTheme.successGreen, _handleAcknowledge),
+            const SizedBox(width: 6),
+            _actionBtn('ADD NOTE', AppTheme.infoBlue, _handleAddNote),
+            const SizedBox(width: 6),
+            _actionBtn('FORWARD', AppTheme.warningOrange, _handleForward),
           ];
 
         default:
@@ -1007,214 +1182,573 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     return [];
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final status = widget.item['status'] ?? 'pending';
-    final priority = widget.item['priority']?.toString() ?? 'Med';
-    final aiSummary = widget.item['summary'] ?? 'Action Item';
-    final aiAnalysis = widget.item['ai_analysis'];
-    final proofPhotoUrl = widget.item['proof_photo_url'];
-    final isDependencyLocked = widget.item['is_dependency_locked'] == true;
+  /// Review actions for AI-suggested items (Step 3E)
+  List<Widget> _getReviewActions() {
+    return [
+      _actionBtn('CONFIRM', AppTheme.successGreen, _handleConfirmReview),
+      const SizedBox(width: 6),
+      _actionBtn('EDIT', AppTheme.infoBlue, _handleEditSummary),
+      const SizedBox(width: 6),
+      _actionBtn('DISMISS', AppTheme.textSecondary, _handleDismissReview),
+    ];
+  }
 
-    return Card(
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppTheme.spacingM,
-        vertical: AppTheme.spacingS,
-      ),
-      elevation: 2,
-      child: InkWell(
-        onTap: () {
-          setState(() => _isExpanded = !_isExpanded);
-          if (_isExpanded && _voiceNote == null) _loadVoiceNote();
-        },
-        borderRadius: BorderRadius.circular(AppTheme.radiusL),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(AppTheme.spacingM),
-              child: Column(
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      PriorityIndicator(priority: priority),
-                      const SizedBox(width: AppTheme.spacingM),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              aiSummary,
-                              style: AppTheme.bodyLarge.copyWith(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                            const SizedBox(height: AppTheme.spacingS),
-                            Wrap(
-                              spacing: AppTheme.spacingS,
-                              runSpacing: AppTheme.spacingS,
-                              children: [
-                                CategoryBadge(
-                                  text: _getCategoryLabel(),
-                                  color: _getCategoryColor(),
-                                ),
-                                CategoryBadge(
-                                  text: status.toUpperCase(),
-                                  color: status == 'completed'
-                                      ? AppTheme.successGreen
-                                      : status == 'verifying'
-                                          ? AppTheme.warningOrange
-                                          : AppTheme.textSecondary,
-                                  icon: status == 'completed'
-                                      ? Icons.check_circle
-                                      : status == 'verifying'
-                                          ? Icons.verified
-                                          : Icons.pending,
-                                ),
-                                if (isDependencyLocked)
-                                  const CategoryBadge(
-                                    text: 'BLOCKED',
-                                    color: AppTheme.errorRed,
-                                    icon: Icons.lock,
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.menu_open_rounded,
-                          color: AppTheme.textSecondary,
-                        ),
-                        onPressed: _showSecondaryActions,
-                        tooltip: 'Secondary Actions',
-                      ),
-                    ],
-                  ),
-                  if (aiAnalysis != null && aiAnalysis.toString().isNotEmpty) ...[
-                    const SizedBox(height: AppTheme.spacingM),
-                    Container(
-                      padding: const EdgeInsets.all(AppTheme.spacingM),
-                      decoration: BoxDecoration(
-                        color: AppTheme.infoBlue.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusM),
-                        border: Border.all(
-                          color: AppTheme.infoBlue.withValues(alpha: 0.1),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.auto_awesome,
-                            size: 16,
-                            color: AppTheme.infoBlue,
-                          ),
-                          const SizedBox(width: AppTheme.spacingS),
-                          Expanded(
-                            child: Text(
-                              aiAnalysis.toString(),
-                              style: AppTheme.bodyMedium.copyWith(
-                                color: AppTheme.infoBlue,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            if (_isExpanded) ...[
-              const Divider(height: 1),
-              if (_isLoading)
-                const Padding(
-                  padding: EdgeInsets.all(AppTheme.spacingL),
-                  child: CircularProgressIndicator(),
-                )
-              else if (_voiceNote != null)
-                Padding(
-                  padding: const EdgeInsets.all(AppTheme.spacingM),
-                  child: Column(
-                    children: [
-                      if (_voiceNote!['audio_url'] != null)
-                        VoiceNoteAudioPlayer(audioUrl: _voiceNote!['audio_url']),
-                      TranscriptionDisplay(
-                        noteId: widget.item['voice_note_id'],
-                        transcription: _voiceNote!['transcript_final'] ??
-                            _voiceNote!['transcription'] ??
-                            _voiceNote!['transcript_en_current'],
-                        status: _voiceNote!['status'] ?? '',
-                        isEdited: _voiceNote!['is_edited'],
-                      ),
-                    ],
-                  ),
+  // ─── Build Helpers ────────────────────────────────────────────
+
+  /// Collapsed card content — 4-line layout
+  Widget _buildCollapsedContent() {
+    final status = widget.item['status'] ?? 'pending';
+    final aiSummary = widget.item['summary'] ?? 'Action Item';
+    final isCritical = widget.item['is_critical_flag'] == true;
+    final needsReview = widget.item['needs_review'] == true &&
+        widget.item['review_status'] != 'confirmed';
+
+    // For approval cards, append extracted amount to summary
+    String summaryText = aiSummary;
+    if (widget.item['category'] == 'approval' && _approvalDetails != null) {
+      final amount = _approvalDetails!['estimated_amount'];
+      if (amount != null) {
+        summaryText = '$aiSummary \u2014 Rs $amount';
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Line 1: Priority dot + label, Category pill, badges, time
+          Row(
+            children: [
+              // Priority: colored dot + text
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: _getPriorityColor(),
+                  shape: BoxShape.circle,
                 ),
-              if (proofPhotoUrl != null) ...[
-                const Divider(height: 1),
-                Padding(
-                  padding: const EdgeInsets.all(AppTheme.spacingM),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'PROOF OF WORK',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: AppTheme.spacingS),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(AppTheme.radiusM),
-                        child: Image.network(
-                          proofPhotoUrl,
-                          height: 200,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ],
-                  ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                (widget.item['priority'] ?? 'MED').toString().toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: _getPriorityColor(),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Category: colored text
+              Text(
+                _getCategoryLabel(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: _getCategoryColor(),
+                ),
+              ),
+              if (isCritical) ...[
+                const SizedBox(width: 8),
+                const CategoryBadge(
+                  text: 'CRITICAL',
+                  color: AppTheme.errorRed,
+                  icon: Icons.warning,
                 ),
               ],
+              if (needsReview) ...[
+                const SizedBox(width: 8),
+                const CategoryBadge(
+                  text: 'AI-SUGGESTED',
+                  color: Color(0xFF9E9E9E),
+                  icon: Icons.auto_awesome,
+                ),
+              ],
+              const Spacer(),
+              Text(_getRelativeTime(), style: AppTheme.caption),
             ],
-            if (isDependencyLocked) ...[
-              const Divider(height: 1),
-              Container(
-                padding: const EdgeInsets.all(AppTheme.spacingM),
-                color: AppTheme.errorRed.withValues(alpha: 0.05),
-                child: Row(
-                  children: [
-                    const Icon(Icons.lock, size: 16, color: AppTheme.errorRed),
-                    const SizedBox(width: AppTheme.spacingS),
-                    Expanded(
-                      child: Text(
-                        'Blocked by dependency — a parent task must be completed first',
-                        style: AppTheme.bodyMedium.copyWith(
-                          color: AppTheme.errorRed,
+          ),
+          const SizedBox(height: 6),
+          // Line 2: AI summary (2 lines max)
+          Text(
+            summaryText,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          // Line 3: Avatar + Sender + Project + Status
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 12,
+                backgroundColor: AppTheme.primaryIndigo,
+                child: Text(
+                  (_senderName ?? '?')[0].toUpperCase(),
+                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                ),
+              ),
+              const SizedBox(width: AppTheme.spacingS),
+              Expanded(
+                child: Text(
+                  [
+                    _senderName ?? 'Loading...',
+                    if (_projectName != null) _projectName!,
+                  ].join(' \u00b7 '),
+                  style: AppTheme.caption,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (status != 'pending')
+                CategoryBadge(
+                  text: status.toUpperCase(),
+                  color: status == 'completed'
+                      ? AppTheme.successGreen
+                      : status == 'verifying'
+                          ? AppTheme.warningOrange
+                          : AppTheme.infoBlue,
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+        ],
+      ),
+    );
+  }
+
+  /// Action button row — Line 4 of collapsed card
+  Widget _buildActionRow() {
+    final isDependencyLocked = widget.item['is_dependency_locked'] == true;
+    final needsReview = widget.item['needs_review'] == true &&
+        widget.item['review_status'] != 'confirmed';
+
+    if (isDependencyLocked) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        color: AppTheme.errorRed.withValues(alpha: 0.05),
+        child: Row(
+          children: [
+            const Icon(Icons.lock, size: 14, color: AppTheme.errorRed),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                'Blocked by dependency',
+                style: AppTheme.caption.copyWith(color: AppTheme.errorRed),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final actions = needsReview ? _getReviewActions() : _getSurfaceActions();
+    if (actions.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 4, 8),
+      child: Row(
+        children: [
+          ...actions,
+          const SizedBox(width: 4),
+          InkWell(
+            onTap: _showSecondaryActions,
+            borderRadius: BorderRadius.circular(16),
+            child: const Padding(
+              padding: EdgeInsets.all(6),
+              child: Icon(Icons.more_horiz, size: 20, color: AppTheme.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Expanded detail content — shown below collapsed card
+  Widget _buildExpandedContent() {
+    final aiAnalysis = widget.item['ai_analysis'];
+    final proofPhotoUrl = widget.item['proof_photo_url'];
+    final confidenceScore = _getConfidenceScore();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 1),
+        // Audio player + transcript
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.all(AppTheme.spacingL),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_voiceNote != null)
+          Padding(
+            padding: const EdgeInsets.all(AppTheme.spacingM),
+            child: Column(
+              children: [
+                if (_voiceNote!['audio_url'] != null)
+                  VoiceNoteAudioPlayer(audioUrl: _voiceNote!['audio_url']),
+                TranscriptionDisplay(
+                  noteId: widget.item['voice_note_id'],
+                  transcription: _voiceNote!['transcript_final'] ??
+                      _voiceNote!['transcription'] ??
+                      _voiceNote!['transcript_en_current'],
+                  status: _voiceNote!['status'] ?? '',
+                  isEdited: _voiceNote!['is_edited'],
+                ),
+              ],
+            ),
+          ),
+        // AI Analysis + Confidence bar
+        if (aiAnalysis != null && aiAnalysis.toString().isNotEmpty) ...[
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(AppTheme.spacingM),
+            child: Container(
+              padding: const EdgeInsets.all(AppTheme.spacingM),
+              decoration: BoxDecoration(
+                color: AppTheme.infoBlue.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(AppTheme.radiusM),
+                border: Border.all(color: AppTheme.infoBlue.withValues(alpha: 0.1)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, size: 16, color: AppTheme.infoBlue),
+                      const SizedBox(width: AppTheme.spacingS),
+                      const Text(
+                        'AI Analysis',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.infoBlue,
                           fontSize: 13,
                         ),
                       ),
+                      const Spacer(),
+                      if (confidenceScore != null)
+                        _buildConfidenceBar(confidenceScore),
+                    ],
+                  ),
+                  const SizedBox(height: AppTheme.spacingS),
+                  Text(
+                    aiAnalysis.toString(),
+                    style: AppTheme.bodyMedium.copyWith(
+                      color: AppTheme.infoBlue,
+                      fontStyle: FontStyle.italic,
                     ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        // Structured approval details (Step 4C)
+        if (widget.item['category'] == 'approval')
+          _buildApprovalDetailsSection(),
+        // Proof photo
+        if (proofPhotoUrl != null) ...[
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(AppTheme.spacingM),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'PROOF OF WORK',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+                const SizedBox(height: AppTheme.spacingS),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusM),
+                  child: Image.network(
+                    proofPhotoUrl,
+                    height: 200,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        // Mini stakeholder trail (last 3)
+        if (_interactionHistory.isNotEmpty) _buildMiniStakeholderTrail(),
+      ],
+    );
+  }
+
+  /// Confidence bar — 60px wide, 4px tall, colored by score (Step 3F)
+  Widget _buildConfidenceBar(double score) {
+    Color barColor;
+    if (score >= 0.85) {
+      barColor = AppTheme.successGreen;
+    } else if (score >= 0.70) {
+      barColor = AppTheme.warningOrange;
+    } else {
+      barColor = AppTheme.textSecondary;
+    }
+
+    return Tooltip(
+      message: 'AI confidence: ${(score * 100).toStringAsFixed(0)}%',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${(score * 100).toStringAsFixed(0)}%',
+            style: AppTheme.caption.copyWith(
+              color: barColor,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 60,
+            height: 4,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: score,
+                backgroundColor: Colors.grey.shade200,
+                valueColor: AlwaysStoppedAnimation(barColor),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Structured approval details section (Step 4C)
+  Widget _buildApprovalDetailsSection() {
+    if (_approvalDetails == null && _materialRequests.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      children: [
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.all(AppTheme.spacingM),
+          child: Container(
+            padding: const EdgeInsets.all(AppTheme.spacingM),
+            decoration: BoxDecoration(
+              color: AppTheme.warningOrange.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(AppTheme.radiusM),
+              border: Border.all(
+                color: AppTheme.warningOrange.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'APPROVAL DETAILS',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: AppTheme.warningOrange,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.spacingS),
+                if (_approvalDetails != null) ...[
+                  _buildDetailRow(
+                    'Category',
+                    _approvalDetails!['category']?.toString() ?? '-',
+                  ),
+                  _buildDetailRow(
+                    'Estimated Amount',
+                    _approvalDetails!['estimated_amount'] != null
+                        ? 'Rs ${_approvalDetails!['estimated_amount']}'
+                        : '-',
+                  ),
+                  _buildDetailRow('Requested By', _senderName ?? '-'),
+                  _buildDetailRow('Project', _projectName ?? '-'),
+                ],
+                if (_materialRequests.isNotEmpty) ...[
+                  const SizedBox(height: AppTheme.spacingS),
+                  const Text(
+                    'Materials:',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                  const SizedBox(height: AppTheme.spacingXS),
+                  ..._materialRequests.map((m) => Padding(
+                        padding: const EdgeInsets.only(left: 8, bottom: 4),
+                        child: Text(
+                          '\u2022 ${m['material_name'] ?? ''} \u2014 ${m['quantity'] ?? ''} ${m['unit'] ?? ''}',
+                          style: AppTheme.bodySmall,
+                        ),
+                      )),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: AppTheme.caption.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Expanded(child: Text(value, style: AppTheme.bodySmall)),
+        ],
+      ),
+    );
+  }
+
+  /// Mini stakeholder trail — last 3 interactions
+  Widget _buildMiniStakeholderTrail() {
+    final lastThree = _interactionHistory.length > 3
+        ? _interactionHistory.sublist(_interactionHistory.length - 3)
+        : _interactionHistory;
+
+    return Column(
+      children: [
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.all(AppTheme.spacingM),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'RECENT ACTIVITY',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (_interactionHistory.length > 3)
+                    GestureDetector(
+                      onTap: _showStakeholderTrail,
+                      child: Text(
+                        'View all (${_interactionHistory.length})',
+                        style: AppTheme.caption.copyWith(color: AppTheme.infoBlue),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppTheme.spacingS),
+              ...lastThree.map((interaction) {
+                final timestamp = DateTime.parse(interaction['timestamp']);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _getInteractionIcon(interaction['action']),
+                        size: 14,
+                        color: AppTheme.textSecondary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${interaction['action'].toString().toUpperCase()} \u2014 ${interaction['details']}',
+                          style: AppTheme.caption,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        _formatTimestamp(timestamp),
+                        style: AppTheme.caption.copyWith(fontSize: 10),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─── Main Build ───────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final needsReview = widget.item['needs_review'] == true &&
+        widget.item['review_status'] != 'confirmed';
+    final isCritical = widget.item['is_critical_flag'] == true;
+
+    // Left border color: critical > needs-review > priority
+    Color leftBorderColor;
+    if (isCritical) {
+      leftBorderColor = AppTheme.errorRed;
+    } else if (needsReview) {
+      leftBorderColor = const Color(0xFFBDBDBD);
+    } else {
+      leftBorderColor = widget.stageColor ?? _getPriorityColor();
+    }
+
+    // Needs-review cards get amber tint background
+    Color? cardBackground;
+    if (needsReview) {
+      cardBackground = const Color(0xFFFFF8E1);
+    }
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      elevation: _isExpanded ? 3 : 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusM),
+      ),
+      clipBehavior: Clip.hardEdge,
+      color: cardBackground,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 4px left priority/status border bar
+            Container(width: 4, color: leftBorderColor),
+            // Card content
+            Expanded(
+              child: InkWell(
+                onTap: () {
+                  if (widget.onExpandChanged != null) {
+                    final willExpand = !_isExpanded;
+                    widget.onExpandChanged!(
+                      willExpand ? widget.item['id'] : null,
+                    );
+                    if (willExpand && _voiceNote == null) _loadVoiceNote();
+                  } else {
+                    setState(() => _localExpanded = !_localExpanded);
+                    if (_localExpanded && _voiceNote == null) _loadVoiceNote();
+                  }
+                },
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildCollapsedContent(),
+                    _buildActionRow(),
+                    if (_isExpanded) _buildExpandedContent(),
                   ],
                 ),
               ),
-            ] else if (_getSurfaceActions().isNotEmpty) ...[
-              const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.all(AppTheme.spacingM),
-                child: Row(
-                  children: _getSurfaceActions(),
-                ),
-              ),
-            ],
+            ),
           ],
         ),
       ),
     );
   }
 }
+
+// ─── Forward Selection Sheet (preserved) ──────────────────────────
 
 class ForwardSelectionSheet extends StatelessWidget {
   final String accountId;

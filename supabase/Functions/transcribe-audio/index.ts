@@ -6,10 +6,27 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const LANGUAGE_NAMES: { [key: string]: string } = { 
-  'en': 'English', 'hi': 'Hindi', 'te': 'Telugu', 'ta': 'Tamil', 'kn': 'Kannada', 
-  'mr': 'Marathi', 'gu': 'Gujarati', 'pa': 'Punjabi', 'ml': 'Malayalam', 
+const LANGUAGE_NAMES: { [key: string]: string } = {
+  'en': 'English', 'hi': 'Hindi', 'te': 'Telugu', 'ta': 'Tamil', 'kn': 'Kannada',
+  'mr': 'Marathi', 'gu': 'Gujarati', 'pa': 'Punjabi', 'ml': 'Malayalam',
   'bn': 'Bengali', 'ur': 'Urdu'
+}
+
+/**
+ * Critical/safety keywords that trigger Red Alert Banner on manager dashboard.
+ * If any keyword is detected in the transcript (at ANY confidence level),
+ * an action_item is force-created with is_critical_flag = true.
+ */
+const CRITICAL_KEYWORDS = [
+  'injury', 'injured', 'hurt', 'accident', 'collapse', 'collapsed',
+  'falling', 'fell', 'fire', 'smoke', 'gas', 'leak', 'leaking',
+  'flood', 'flooding', 'electrocution', 'emergency', 'unsafe',
+  'danger', 'dangerous', 'hazard', 'crack', 'structural'
+];
+
+function detectCriticalKeywords(transcript: string): boolean {
+  const lower = transcript.toLowerCase();
+  return CRITICAL_KEYWORDS.some(kw => lower.includes(kw));
 }
 
 /**
@@ -47,18 +64,19 @@ function mapAiPriority(priority: string): string {
 /**
  * Maps intent to action item category (only actionable intents)
  */
-function getActionCategory(intent: string): 'update' | 'approval' | 'action_required' | null {
+function getActionCategory(intent: string): 'approval' | 'action_required' | null {
   const normalized = intent.toLowerCase().trim();
-  
-  // Information category does not create action items
-  if (normalized === 'information') {
+
+  // Updates and information do NOT create action items (Ambient Updates).
+  // Updates appear only in the Feed tab; information is purely FYI.
+  if (normalized === 'information' || normalized === 'update') {
     return null;
   }
-  
-  if (['update', 'approval', 'action_required'].includes(normalized)) {
-    return normalized as 'update' | 'approval' | 'action_required';
+
+  if (['approval', 'action_required'].includes(normalized)) {
+    return normalized as 'approval' | 'action_required';
   }
-  
+
   return null;
 }
 
@@ -362,10 +380,16 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
 
     /* --------------------------------------------------
        PHASE 6: CREATE ACTION ITEM (IF ACTIONABLE)
+       Implements confidence routing + critical keyword
+       detection per DECISIONS_AND_REQUIREMENTS.md §7.2
     -------------------------------------------------- */
     console.log("[6] Evaluating action item creation...");
-    
-    if (actionCategory) {
+
+    const isCritical = detectCriticalKeywords(transcriptEn);
+    const confidenceScore: number = ai.confidence_score ?? 0.5;
+    const shouldCreateAction = actionCategory || isCritical;
+
+    if (shouldCreateAction) {
       const finalShortSummary = ai.short_summary || transcriptEn.substring(0, 100);
       const finalDetailedSummary = ai.detailed_summary || transcriptEn;
 
@@ -380,7 +404,7 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
           .eq("account_id", voiceNote.account_id)
           .in("role", ['manager', 'admin'])
           .limit(1);
-        
+
         if (managers && managers.length > 0) {
           managerId = managers[0].id;
         }
@@ -391,24 +415,52 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         action: 'created',
         actor_id: voiceNote.user_id,
         actor_role: voiceNote.users?.role || 'worker',
-        details: 'Action item auto-created from voice note'
+        details: isCritical
+          ? 'Action item auto-created from voice note (CRITICAL — safety keyword detected)'
+          : 'Action item auto-created from voice note'
       };
+
+      // Determine confidence tier and review flags
+      let needsReview = false;
+      let reviewStatus: string | null = null;
+
+      if (isCritical) {
+        // Critical override: always needs review, force high priority
+        needsReview = true;
+        reviewStatus = 'pending_review';
+        console.log("[6] CRITICAL keywords detected — forcing action item creation");
+      } else if (confidenceScore >= 0.85) {
+        needsReview = false;
+        reviewStatus = null;
+      } else if (confidenceScore >= 0.70) {
+        needsReview = true;
+        reviewStatus = 'pending_review';
+      } else {
+        needsReview = true;
+        reviewStatus = 'flagged';
+      }
 
       dbOperations.push(
         supabase.from("action_items").insert({
           voice_note_id: voiceNoteId,
-          category: actionCategory,
+          // Critical override: force 'action_required' if original intent was update/information
+          category: actionCategory || 'action_required',
           summary: finalShortSummary,
           details: finalDetailedSummary,
-          priority: finalPriority,
+          priority: isCritical ? 'High' : finalPriority,
           status: 'pending',
           project_id: voiceNote.project_id,
           account_id: voiceNote.account_id,
           user_id: voiceNote.user_id,
           assigned_to: managerId,
+          // New confidence/review columns
+          confidence_score: confidenceScore,
+          needs_review: needsReview,
+          review_status: reviewStatus,
+          is_critical_flag: isCritical,
           ai_analysis: JSON.stringify({
             intent: finalIntent,
-            confidence_score: ai.confidence_score,
+            confidence_score: confidenceScore,
             prompt_version: analysisPrompt.version,
             model: providerName === 'groq' ? 'llama-3.3-70b' : 'gpt-4o-mini',
             extracted_items: {
@@ -424,9 +476,26 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         })
       );
 
-      console.log("✓ Action item created");
+      // Create urgent notification for critical items
+      if (isCritical && managerId) {
+        dbOperations.push(
+          supabase.from("notifications").insert({
+            user_id: managerId,
+            account_id: voiceNote.account_id,
+            project_id: voiceNote.project_id,
+            type: 'critical_detected',
+            title: 'CRITICAL: Safety issue reported',
+            body: finalShortSummary,
+            reference_id: voiceNoteId,
+            reference_type: 'voice_note',
+          })
+        );
+        console.log("✓ Critical notification created for manager");
+      }
+
+      console.log(`✓ Action item created (critical=${isCritical}, confidence=${confidenceScore}, needs_review=${needsReview})`);
     } else {
-      console.log("[6] No action item needed (information category)");
+      console.log(`[6] No action item needed (intent=${finalIntent}, ambient update or information)`);
     }
 
     // 5.3: Update voice note to completed status

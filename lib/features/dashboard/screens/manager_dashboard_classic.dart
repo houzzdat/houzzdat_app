@@ -5,7 +5,8 @@ import 'package:houzzdat_app/features/dashboard/tabs/actions_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/projects_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/team_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/feed_tab.dart';
-import 'package:houzzdat_app/features/dashboard/widgets/layout_toggle_button.dart'; // Add this import
+import 'package:houzzdat_app/features/dashboard/widgets/layout_toggle_button.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/critical_alert_banner.dart';
 
 class ManagerDashboardClassic extends StatefulWidget {
   const ManagerDashboardClassic({super.key});
@@ -77,13 +78,25 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
             )
           ],
         ),
-        body: TabBarView(
-          children: [ 
-            ActionsTab(accountId: accountId), 
-            ProjectsTab(accountId: accountId), 
-            TeamTab(accountId: accountId), 
-            FeedTab(accountId: accountId) 
-          ]
+        body: Column(
+          children: [
+            CriticalAlertBanner(
+              accountId: accountId,
+              onViewActions: () {
+                DefaultTabController.of(context).animateTo(0);
+              },
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  ActionsTab(accountId: accountId),
+                  ProjectsTab(accountId: accountId),
+                  TeamTab(accountId: accountId),
+                  FeedTab(accountId: accountId),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

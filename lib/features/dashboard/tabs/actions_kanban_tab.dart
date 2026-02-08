@@ -23,6 +23,7 @@ class _ActionsKanbanTabState extends State<ActionsKanbanTab>
   List<Map<String, dynamic>> _activeActions = [];
   List<Map<String, dynamic>> _logsActions = [];
   bool _isLoading = true;
+  String? _expandedCardId;
 
   @override
   void initState() {
@@ -62,6 +63,8 @@ class _ActionsKanbanTabState extends State<ActionsKanbanTab>
       if (mounted) {
         final allActions = (data as List)
             .map((e) => Map<String, dynamic>.from(e))
+            // Filter out updates — they are ambient (Feed-only)
+            .where((item) => item['category'] != 'update')
             .toList();
 
         setState(() {
@@ -294,6 +297,10 @@ class _ActionsKanbanTabState extends State<ActionsKanbanTab>
             child: ActionCardWidget(
               item: items[index],
               onRefresh: _loadActions,
+              stageColor: color,
+              expandedCardId: _expandedCardId,
+              onExpandChanged: (id) =>
+                  setState(() => _expandedCardId = id),
             ),
           );
         },
