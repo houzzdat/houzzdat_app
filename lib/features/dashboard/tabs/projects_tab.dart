@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
-import 'package:houzzdat_app/features/dashboard/widgets/project_card_widget.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/project_dialogs.dart';
 
 class ProjectsTab extends StatefulWidget {
@@ -33,14 +32,12 @@ class _ProjectsTabState extends State<ProjectsTab> {
     if (result == null) return;
 
     try {
-      // 1. Insert the project
       final insertData = <String, dynamic>{
         'name': result['name'],
         'location': result['location'],
         'account_id': widget.accountId,
       };
 
-      // Geofence coordinates
       if (result['siteLat'] != null && result['siteLng'] != null) {
         insertData['site_latitude'] = double.parse(result['siteLat']!);
         insertData['site_longitude'] = double.parse(result['siteLng']!);
@@ -55,13 +52,11 @@ class _ProjectsTabState extends State<ProjectsTab> {
 
       final projectId = projectResponse['id'] as String;
 
-      // 2. Handle owner linking if owner info was provided
       final existingOwnerId = result['existingOwnerId'];
       final ownerEmail = result['ownerEmail'];
       final ownerPhone = result['ownerPhone'];
 
       if (existingOwnerId != null && existingOwnerId.isNotEmpty) {
-        // Link existing owner to project
         await _supabase.from('project_owners').insert({
           'project_id': projectId,
           'owner_id': existingOwnerId,
@@ -76,7 +71,6 @@ class _ProjectsTabState extends State<ProjectsTab> {
           );
         }
       } else if (ownerEmail != null && ownerEmail.isNotEmpty) {
-        // Create new owner via invite-user edge function
         final ownerName = result['ownerName'] ?? '';
         final ownerPassword = result['ownerPassword'] ?? '';
 
@@ -139,7 +133,7 @@ class _ProjectsTabState extends State<ProjectsTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Could not delete site. Please try again.'),
+            content: const Text('Could not create site. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -163,7 +157,6 @@ class _ProjectsTabState extends State<ProjectsTab> {
         'location': result['location'],
       };
 
-      // Geofence coordinates
       if (result['siteLat'] != null && result['siteLng'] != null) {
         updateData['site_latitude'] = double.parse(result['siteLat']!);
         updateData['site_longitude'] = double.parse(result['siteLng']!);
@@ -255,12 +248,19 @@ class _ProjectsTabState extends State<ProjectsTab> {
                 );
               }
 
-              return ListView.builder(
-                padding: const EdgeInsets.all(AppTheme.spacingS),
+              // Two-column grid layout
+              return GridView.builder(
+                padding: const EdgeInsets.all(AppTheme.spacingM),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: AppTheme.spacingM,
+                  mainAxisSpacing: AppTheme.spacingM,
+                  childAspectRatio: 1.0, // Square cards
+                ),
                 itemCount: snap.data!.length,
                 itemBuilder: (context, i) {
                   final project = snap.data![i];
-                  return ProjectCardWidget(
+                  return _SiteGridCard(
                     project: project,
                     onEdit: () => _handleEditProject(project),
                     onDelete: () => _handleDeleteProject(project),
@@ -273,6 +273,292 @@ class _ProjectsTabState extends State<ProjectsTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Square site card with photo thumbnail for 2-column grid layout
+class _SiteGridCard extends StatefulWidget {
+  final Map<String, dynamic> project;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback onAssignUsers;
+  final VoidCallback onAssignOwner;
+
+  const _SiteGridCard({
+    required this.project,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onAssignUsers,
+    required this.onAssignOwner,
+  });
+
+  @override
+  State<_SiteGridCard> createState() => _SiteGridCardState();
+}
+
+class _SiteGridCardState extends State<_SiteGridCard> {
+  int _userCount = 0;
+  String? _sitePhotoUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserCount();
+    _fetchSitePhoto();
+  }
+
+  Future<void> _fetchUserCount() async {
+    try {
+      final response = await Supabase.instance.client
+          .from('users')
+          .select('id')
+          .eq('current_project_id', widget.project['id']);
+
+      if (mounted) {
+        setState(() => _userCount = response.length);
+      }
+    } catch (e) {
+      debugPrint('Error fetching user count: $e');
+    }
+  }
+
+  Future<void> _fetchSitePhoto() async {
+    try {
+      // Try to get the latest proof photo from action items for this project
+      final response = await Supabase.instance.client
+          .from('action_items')
+          .select('proof_photo_url')
+          .eq('project_id', widget.project['id'])
+          .not('proof_photo_url', 'is', null)
+          .order('updated_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (mounted && response != null && response['proof_photo_url'] != null) {
+        setState(() => _sitePhotoUrl = response['proof_photo_url']);
+      }
+    } catch (e) {
+      debugPrint('Error fetching site photo: $e');
+    }
+
+    // Also check project's own photo_url field if available
+    if (_sitePhotoUrl == null && widget.project['photo_url'] != null) {
+      setState(() => _sitePhotoUrl = widget.project['photo_url']);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.radiusL),
+        border: Border.all(
+          color: Colors.black.withValues(alpha: 0.05),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Photo thumbnail area (top half)
+          Expanded(
+            flex: 3,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Photo or placeholder
+                if (_sitePhotoUrl != null)
+                  Image.network(
+                    _sitePhotoUrl!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _buildPhotoPlaceholder(),
+                  )
+                else
+                  _buildPhotoPlaceholder(),
+
+                // Menu button overlay
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      shape: BoxShape.circle,
+                    ),
+                    child: PopupMenuButton(
+                      iconSize: 20,
+                      icon: const Icon(Icons.more_vert, color: Colors.white, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'assign',
+                          child: Row(
+                            children: [
+                              Icon(Icons.person_add, size: 20),
+                              SizedBox(width: AppTheme.spacingS),
+                              Text("Assign Users"),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'assign_owner',
+                          child: Row(
+                            children: [
+                              Icon(Icons.supervisor_account, size: 20),
+                              SizedBox(width: AppTheme.spacingS),
+                              Text("Assign Owner"),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit, size: 20),
+                              SizedBox(width: AppTheme.spacingS),
+                              Text("Edit"),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete, color: AppTheme.errorRed, size: 20),
+                              SizedBox(width: AppTheme.spacingS),
+                              Text("Delete", style: TextStyle(color: AppTheme.errorRed)),
+                            ],
+                          ),
+                        ),
+                      ],
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'assign':
+                            widget.onAssignUsers();
+                            break;
+                          case 'assign_owner':
+                            widget.onAssignOwner();
+                            break;
+                          case 'edit':
+                            widget.onEdit();
+                            break;
+                          case 'delete':
+                            widget.onDelete();
+                            break;
+                        }
+                      },
+                    ),
+                  ),
+                ),
+
+                // User count badge overlay
+                Positioned(
+                  bottom: 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusS),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.people_rounded,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$_userCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Site info (bottom portion)
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(AppTheme.spacingS),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    widget.project['name'] ?? 'Site',
+                    style: AppTheme.bodyMedium.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (widget.project['location'] != null) ...[
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.location_on_rounded,
+                          size: 12,
+                          color: AppTheme.textSecondary,
+                        ),
+                        const SizedBox(width: 2),
+                        Expanded(
+                          child: Text(
+                            widget.project['location'],
+                            style: AppTheme.caption,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhotoPlaceholder() {
+    return Container(
+      color: AppTheme.surfaceGrey,
+      child: const Center(
+        child: Icon(
+          Icons.business_rounded,
+          size: 40,
+          color: AppTheme.primaryIndigo,
+        ),
+      ),
     );
   }
 }

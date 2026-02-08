@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
-import 'package:houzzdat_app/features/dashboard/widgets/feed_filters_widget.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_card.dart';
 import 'package:houzzdat_app/features/worker/models/voice_note_card_view_model.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
@@ -19,11 +18,13 @@ class FeedTab extends StatefulWidget {
 class _FeedTabState extends State<FeedTab> {
   final _supabase = Supabase.instance.client;
   final _recorderService = AudioRecorderService();
+  final _searchController = TextEditingController();
 
   // Filter State
   String? _selectedProjectId;
   String? _selectedUserId;
-  DateTime? _selectedDate;
+  String _searchQuery = '';
+  String _sortBy = 'newest';
 
   // Reply State
   bool _isReplying = false;
@@ -31,6 +32,40 @@ class _FeedTabState extends State<FeedTab> {
 
   // Acknowledged IDs (local tracking for instant UI feedback)
   final Set<String> _acknowledgedIds = {};
+
+  // Cached lookup data
+  Map<String, String> _projectNames = {};
+  Map<String, String> _userEmails = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLookups();
+  }
+
+  Future<void> _loadLookups() async {
+    if (widget.accountId == null || widget.accountId!.isEmpty) return;
+    try {
+      final projects = await _supabase
+          .from('projects')
+          .select('id, name')
+          .eq('account_id', widget.accountId!);
+      final users = await _supabase
+          .from('users')
+          .select('id, email')
+          .eq('account_id', widget.accountId!);
+
+      if (mounted) {
+        setState(() {
+          _projectNames = {for (var p in projects) p['id'].toString(): p['name']?.toString() ?? 'Site'};
+          _userEmails = {for (var u in users) u['id'].toString(): u['email']?.toString() ?? 'User'};
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading lookups: $e');
+      if (mounted) setState(() {});
+    }
+  }
 
   Stream<List<Map<String, dynamic>>> _getVoiceNotesStream() {
     if (widget.accountId == null || widget.accountId!.isEmpty) {
@@ -45,23 +80,47 @@ class _FeedTabState extends State<FeedTab> {
   }
 
   List<Map<String, dynamic>> _applyFilters(List<Map<String, dynamic>> notes) {
-    return notes.where((n) {
+    var result = notes.where((n) {
       if (_selectedProjectId != null && n['project_id'] != _selectedProjectId) {
         return false;
       }
       if (_selectedUserId != null && n['user_id'] != _selectedUserId) {
         return false;
       }
-      if (_selectedDate != null) {
-        final noteDate = DateTime.parse(n['created_at']);
-        if (noteDate.year != _selectedDate!.year ||
-            noteDate.month != _selectedDate!.month ||
-            noteDate.day != _selectedDate!.day) {
+
+      // Search filter
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase();
+        final transcript = (n['transcript_final'] ?? n['transcription'] ?? '').toString().toLowerCase();
+        final userEmail = (_userEmails[n['user_id']?.toString()] ?? '').toLowerCase();
+        final projectName = (_projectNames[n['project_id']?.toString()] ?? '').toLowerCase();
+        if (!transcript.contains(query) && !userEmail.contains(query) && !projectName.contains(query)) {
           return false;
         }
       }
+
       return true;
     }).toList();
+
+    // Apply sorting
+    switch (_sortBy) {
+      case 'newest':
+        result.sort((a, b) {
+          final aTime = a['created_at']?.toString() ?? '';
+          final bTime = b['created_at']?.toString() ?? '';
+          return bTime.compareTo(aTime);
+        });
+        break;
+      case 'oldest':
+        result.sort((a, b) {
+          final aTime = a['created_at']?.toString() ?? '';
+          final bTime = b['created_at']?.toString() ?? '';
+          return aTime.compareTo(bTime);
+        });
+        break;
+    }
+
+    return result;
   }
 
   void _handleReply(Map<String, dynamic> note) async {
@@ -89,28 +148,6 @@ class _FeedTabState extends State<FeedTab> {
       }
     }
   }
-
-  void _onFiltersChanged({
-    String? projectId,
-    String? userId,
-    DateTime? date,
-  }) {
-    setState(() {
-      _selectedProjectId = projectId;
-      _selectedUserId = userId;
-      _selectedDate = date;
-    });
-  }
-
-  void _clearFilters() {
-    setState(() {
-      _selectedProjectId = null;
-      _selectedUserId = null;
-      _selectedDate = null;
-    });
-  }
-
-  // ─── Ambient Update Handlers (Step 6D) ──────────────────────
 
   Future<void> _handleAcknowledge(Map<String, dynamic> note) async {
     final noteId = note['id']?.toString();
@@ -191,7 +228,6 @@ class _FeedTabState extends State<FeedTab> {
   }
 
   Future<void> _handleCreateActionFromNote(Map<String, dynamic> note) async {
-    // Show dialog to pick category and priority
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (ctx) {
@@ -295,6 +331,61 @@ class _FeedTabState extends State<FeedTab> {
     );
   }
 
+  Widget _buildFilterChip(
+    String label,
+    String? currentValue,
+    List<(String?, String)> options,
+    Function(String?) onChanged,
+  ) {
+    final displayValue = options.firstWhere(
+      (o) => o.$1 == currentValue,
+      orElse: () => options.first,
+    ).$2;
+
+    return PopupMenuButton<String?>(
+      onSelected: onChanged,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.spacingM,
+          vertical: AppTheme.spacingS,
+        ),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppTheme.primaryIndigo),
+          borderRadius: BorderRadius.circular(AppTheme.radiusL),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                '$label: $displayValue',
+                style: const TextStyle(
+                  color: AppTheme.primaryIndigo,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Icon(
+              Icons.arrow_drop_down,
+              color: AppTheme.primaryIndigo,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+      itemBuilder: (context) => options
+          .map(
+            (option) => PopupMenuItem<String?>(
+              value: option.$1,
+              child: Text(option.$2),
+            ),
+          )
+          .toList(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.accountId == null || widget.accountId!.isEmpty) {
@@ -303,14 +394,166 @@ class _FeedTabState extends State<FeedTab> {
 
     return Column(
       children: [
-        FeedFiltersWidget(
-          accountId: widget.accountId!,
-          selectedProjectId: _selectedProjectId,
-          selectedUserId: _selectedUserId,
-          selectedDate: _selectedDate,
-          onFiltersChanged: _onFiltersChanged,
-          onClearFilters: _clearFilters,
+        // Search Bar (matching Actions tab)
+        Container(
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.spacingM, AppTheme.spacingM, AppTheme.spacingM, 0,
+          ),
+          color: Colors.white,
+          child: TextField(
+            controller: _searchController,
+            onChanged: (value) => setState(() => _searchQuery = value),
+            decoration: InputDecoration(
+              hintText: 'Search voice notes...',
+              prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 20),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: AppTheme.backgroundGrey,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusL),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: AppTheme.spacingM,
+                vertical: AppTheme.spacingS,
+              ),
+            ),
+          ),
         ),
+
+        // Filter & Sort Bar (matching Actions tab)
+        Container(
+          padding: const EdgeInsets.all(AppTheme.spacingM),
+          color: Colors.white,
+          child: Row(
+            children: [
+              Expanded(
+                child: _buildFilterChip(
+                  'Site',
+                  _selectedProjectId,
+                  [
+                    (null, 'All'),
+                    ..._projectNames.entries.map((e) => (e.key, e.value)),
+                  ],
+                  (value) => setState(() => _selectedProjectId = value),
+                ),
+              ),
+              const SizedBox(width: AppTheme.spacingS),
+              Expanded(
+                child: _buildFilterChip(
+                  'User',
+                  _selectedUserId,
+                  [
+                    (null, 'All'),
+                    ..._userEmails.entries.map((e) => (e.key, e.value)),
+                  ],
+                  (value) => setState(() => _selectedUserId = value),
+                ),
+              ),
+              const SizedBox(width: AppTheme.spacingS),
+              // Sort button
+              PopupMenuButton<String>(
+                onSelected: (value) => setState(() => _sortBy = value),
+                tooltip: 'Sort',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.spacingS,
+                    vertical: AppTheme.spacingS,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppTheme.primaryIndigo),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusL),
+                  ),
+                  child: const Icon(
+                    Icons.sort,
+                    color: AppTheme.primaryIndigo,
+                    size: 20,
+                  ),
+                ),
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'newest',
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_downward, size: 18,
+                          color: _sortBy == 'newest' ? AppTheme.primaryIndigo : AppTheme.textSecondary),
+                        const SizedBox(width: AppTheme.spacingS),
+                        Text('Newest First',
+                          style: TextStyle(
+                            fontWeight: _sortBy == 'newest' ? FontWeight.bold : FontWeight.normal,
+                            color: _sortBy == 'newest' ? AppTheme.primaryIndigo : AppTheme.textPrimary,
+                          )),
+                        if (_sortBy == 'newest') ...[
+                          const Spacer(),
+                          const Icon(Icons.check, size: 18, color: AppTheme.primaryIndigo),
+                        ],
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'oldest',
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_upward, size: 18,
+                          color: _sortBy == 'oldest' ? AppTheme.primaryIndigo : AppTheme.textSecondary),
+                        const SizedBox(width: AppTheme.spacingS),
+                        Text('Oldest First',
+                          style: TextStyle(
+                            fontWeight: _sortBy == 'oldest' ? FontWeight.bold : FontWeight.normal,
+                            color: _sortBy == 'oldest' ? AppTheme.primaryIndigo : AppTheme.textPrimary,
+                          )),
+                        if (_sortBy == 'oldest') ...[
+                          const Spacer(),
+                          const Icon(Icons.check, size: 18, color: AppTheme.primaryIndigo),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        // Results count when searching
+        if (_searchQuery.isNotEmpty)
+          StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _getVoiceNotesStream(),
+            builder: (context, snap) {
+              final count = snap.hasData ? _applyFilters(snap.data!).length : 0;
+              return Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppTheme.spacingM,
+                  vertical: AppTheme.spacingS,
+                ),
+                color: AppTheme.infoBlue.withValues(alpha: 0.05),
+                child: Row(
+                  children: [
+                    const Icon(Icons.search, size: 16, color: AppTheme.infoBlue),
+                    const SizedBox(width: AppTheme.spacingS),
+                    Text(
+                      '$count result${count == 1 ? '' : 's'} for "$_searchQuery"',
+                      style: const TextStyle(
+                        color: AppTheme.infoBlue,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+
+        // Voice Notes List
         Expanded(
           child: StreamBuilder<List<Map<String, dynamic>>>(
             stream: _getVoiceNotesStream(),
@@ -327,77 +570,133 @@ class _FeedTabState extends State<FeedTab> {
               }
 
               if (!snap.hasData || snap.data!.isEmpty) {
-                return EmptyStateWidget(
-                  icon: Icons.voice_over_off,
-                  title: "No voice notes found",
-                  subtitle: "Voice notes from your team will appear here",
-                );
-              }
-
-              // Apply client-side filtering
-              final filteredNotes = _applyFilters(snap.data!);
-
-              if (filteredNotes.isEmpty) {
-                return EmptyStateWidget(
-                  icon: Icons.filter_list_off,
-                  title: "No notes match your filters",
-                  subtitle: "Try adjusting your filter settings",
-                  action: ActionButton(
-                    label: "Clear Filters",
-                    icon: Icons.clear,
-                    onPressed: _clearFilters,
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.voice_over_off,
+                        size: 64,
+                        color: AppTheme.textSecondary.withValues(alpha: 0.3),
+                      ),
+                      const SizedBox(height: AppTheme.spacingM),
+                      Text(
+                        'No voice notes found',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary.withValues(alpha: 0.5),
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: AppTheme.spacingS),
+                      Text(
+                        'Voice notes from your team will appear here',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary.withValues(alpha: 0.5),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
                 );
               }
 
-              return ListView.builder(
-                padding: const EdgeInsets.all(AppTheme.spacingS),
-                itemCount: filteredNotes.length,
-                itemBuilder: (context, i) {
-                  final note = filteredNotes[i];
-                  final isReplying = _replyToId == note['id'];
+              final filteredNotes = _applyFilters(snap.data!);
 
-                  return Column(
+              if (filteredNotes.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      VoiceNoteCard(
-                        viewModel: _createViewModel(note),
-                        note: note,
-                        isReplying: isReplying,
-                        onReply: () => _handleReply(note),
-                        onAcknowledge: () => _handleAcknowledge(note),
-                        onAddNote: () => _handleAddNoteToVoiceNote(note),
-                        onCreateAction: () => _handleCreateActionFromNote(note),
-                        isAcknowledged: _acknowledgedIds.contains(note['id']?.toString()) ||
-                            note['acknowledged_by'] != null,
+                      Icon(
+                        _searchQuery.isNotEmpty ? Icons.search_off : Icons.filter_list_off,
+                        size: 64,
+                        color: AppTheme.textSecondary.withValues(alpha: 0.3),
                       ),
-                      if (isReplying)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.reply, size: 20),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  'Recording reply...',
-                                  style: TextStyle(fontStyle: FontStyle.italic),
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.stop, color: Colors.red),
-                                onPressed: () => _handleReply(note),
-                              ),
-                            ],
-                          ),
+                      const SizedBox(height: AppTheme.spacingM),
+                      Text(
+                        _searchQuery.isNotEmpty
+                            ? 'No matching voice notes'
+                            : 'No notes match your filters',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary.withValues(alpha: 0.5),
+                          fontSize: 16,
                         ),
+                      ),
+                      const SizedBox(height: AppTheme.spacingS),
+                      Text(
+                        _searchQuery.isNotEmpty
+                            ? 'Try a different search term'
+                            : 'Try changing your filters',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary.withValues(alpha: 0.5),
+                          fontSize: 14,
+                        ),
+                      ),
                     ],
-                  );
-                },
+                  ),
+                );
+              }
+
+              return RefreshIndicator(
+                onRefresh: () async => setState(() {}),
+                child: ListView.builder(
+                  padding: const EdgeInsets.only(
+                    top: AppTheme.spacingS,
+                    bottom: AppTheme.spacingXL,
+                  ),
+                  itemCount: filteredNotes.length,
+                  itemBuilder: (context, i) {
+                    final note = filteredNotes[i];
+                    final isReplying = _replyToId == note['id'];
+
+                    return Column(
+                      children: [
+                        VoiceNoteCard(
+                          viewModel: _createViewModel(note),
+                          note: note,
+                          isReplying: isReplying,
+                          onReply: () => _handleReply(note),
+                          onAcknowledge: () => _handleAcknowledge(note),
+                          onAddNote: () => _handleAddNoteToVoiceNote(note),
+                          onCreateAction: () => _handleCreateActionFromNote(note),
+                          isAcknowledged: _acknowledgedIds.contains(note['id']?.toString()) ||
+                              note['acknowledged_by'] != null,
+                        ),
+                        if (isReplying)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.reply, size: 20),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Text(
+                                    'Recording reply...',
+                                    style: TextStyle(fontStyle: FontStyle.italic),
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.stop, color: Colors.red),
+                                  onPressed: () => _handleReply(note),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
               );
             },
           ),
         ),
       ],
     );
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 }

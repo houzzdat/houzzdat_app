@@ -24,6 +24,7 @@ class _ActionsTabState extends State<ActionsTab> {
   String _sortBy = 'newest';
   String _searchQuery = '';
   String? _expandedCardId;
+  String? _selectedStatStatus; // For stats card click-to-filter
 
   @override
   void initState() {
@@ -78,8 +79,14 @@ class _ActionsTabState extends State<ActionsTab> {
       // Updates are now ambient-only (Feed tab) — exclude from Actions
       if (action['category'] == 'update') return false;
 
-      final statusMatch = _filterStatus == 'all' ||
-          action['status'] == _filterStatus;
+      // Stats card filter takes priority when active
+      final bool statusMatch;
+      if (_selectedStatStatus != null) {
+        statusMatch = action['status'] == _selectedStatStatus;
+      } else {
+        statusMatch = _filterStatus == 'all' ||
+            action['status'] == _filterStatus;
+      }
 
       // Support 'needs_review' as a virtual category filter
       final bool categoryMatch;
@@ -249,7 +256,7 @@ class _ActionsTabState extends State<ActionsTab> {
           ),
         ),
 
-        // Stats Bar
+        // Stats Bar — tappable cards with highlight effect
         Container(
           padding: const EdgeInsets.all(AppTheme.spacingM),
           color: AppTheme.backgroundGrey,
@@ -258,21 +265,25 @@ class _ActionsTabState extends State<ActionsTab> {
             children: [
               _buildStatCard(
                 'PENDING',
+                'pending',
                 _actions.where((a) => a['status'] == 'pending').length,
                 AppTheme.warningOrange,
               ),
               _buildStatCard(
                 'IN PROGRESS',
+                'in_progress',
                 _actions.where((a) => a['status'] == 'in_progress').length,
                 AppTheme.infoBlue,
               ),
               _buildStatCard(
                 'VERIFYING',
+                'verifying',
                 _actions.where((a) => a['status'] == 'verifying').length,
                 AppTheme.warningOrange,
               ),
               _buildStatCard(
                 'COMPLETED',
+                'completed',
                 _actions.where((a) => a['status'] == 'completed').length,
                 AppTheme.successGreen,
               ),
@@ -454,36 +465,67 @@ class _ActionsTabState extends State<ActionsTab> {
     );
   }
 
-  Widget _buildStatCard(String label, int count, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppTheme.spacingM,
-        vertical: AppTheme.spacingS,
-      ),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(AppTheme.radiusM),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            count.toString(),
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
+  Widget _buildStatCard(String label, String statusKey, int count, Color color) {
+    final isSelected = _selectedStatStatus == statusKey;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          if (_selectedStatStatus == statusKey) {
+            // Toggle off — remove filter
+            _selectedStatStatus = null;
+          } else {
+            // Toggle on — filter by this status
+            _selectedStatStatus = statusKey;
+          }
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.spacingM,
+          vertical: AppTheme.spacingS,
+        ),
+        transform: isSelected
+            ? Matrix4.translationValues(0.0, -4.0, 0.0)
+            : Matrix4.identity(),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.2) : color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(AppTheme.radiusM),
+          border: Border.all(
+            color: isSelected ? color : color.withValues(alpha: 0.3),
+            width: isSelected ? 2 : 1,
           ),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: color,
-              fontWeight: FontWeight.w500,
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Column(
+          children: [
+            Text(
+              count.toString(),
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
             ),
-          ),
-        ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

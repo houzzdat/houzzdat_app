@@ -603,6 +603,109 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     widget.onRefresh();
   }
 
+  /// Manager APPROVE action — replaces Resolve as primary action.
+  /// Includes optional "Add Forward Note" step and optional photo upload.
+  Future<void> _handleManagerApprove() async {
+    final noteController = TextEditingController();
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Approve Action'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.item['summary'] ?? 'Action Item',
+              style: AppTheme.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: AppTheme.spacingM),
+            const Text(
+              'Add a forward note (optional):',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+            ),
+            const SizedBox(height: AppTheme.spacingS),
+            TextField(
+              controller: noteController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Add context or instructions...',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.camera_alt, size: 16),
+            label: const Text('Approve + Photo'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.infoBlue,
+            ),
+            onPressed: () => Navigator.pop(ctx, {
+              'note': noteController.text.trim(),
+              'withPhoto': true,
+            }),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, {
+              'note': noteController.text.trim(),
+              'withPhoto': false,
+            }),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successGreen),
+            child: const Text('Approve', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null) return;
+
+    final note = result['note'] as String;
+    final withPhoto = result['withPhoto'] as bool;
+
+    // Optional photo upload
+    if (withPhoto) {
+      await _handleProofUpload();
+    }
+
+    // Record interaction
+    final details = note.isNotEmpty
+        ? 'Manager approved with note: $note'
+        : 'Manager approved this action';
+    await _recordInteraction('approved', details);
+
+    // Update status
+    final success = await _updateStatus('in_progress');
+    if (success) {
+      await _supabase
+          .from('action_items')
+          .update({
+            'manager_approval': true,
+            'approved_by': _supabase.auth.currentUser?.id,
+            'approved_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', widget.item['id']);
+      widget.onRefresh();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(note.isNotEmpty ? 'Approved with note' : 'Action approved'),
+            backgroundColor: AppTheme.successGreen,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _handleAcknowledge() async {
     await _recordInteraction('acknowledged', 'Manager acknowledged this update');
     await _updateStatus('completed', bypassProofGate: true);
@@ -1000,6 +1103,15 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.done_all, color: AppTheme.successGreen),
+              title: const Text('Resolve'),
+              subtitle: const Text('Mark as resolved (special cases)', style: TextStyle(fontSize: 12)),
+              onTap: () {
+                Navigator.pop(context);
+                _handleResolve();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.escalator_warning, color: AppTheme.warningOrange),
               title: const Text('Escalate to Owner'),
               subtitle: const Text('Send for owner approval', style: TextStyle(fontSize: 12)),
@@ -1162,7 +1274,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
             const SizedBox(width: 6),
             _actionBtn('FORWARD', AppTheme.warningOrange, _handleForward),
             const SizedBox(width: 6),
-            _actionBtn('RESOLVE', AppTheme.successGreen, _handleResolve),
+            _actionBtn('APPROVE', AppTheme.successGreen, _handleManagerApprove),
           ];
 
         case 'update':
