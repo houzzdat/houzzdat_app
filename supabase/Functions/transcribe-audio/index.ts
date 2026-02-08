@@ -909,16 +909,23 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
 
     const isCritical = detectCriticalKeywords(transcriptEn);
     const confidenceScore: number = ai.confidence_score ?? 0.5;
-    const shouldCreateAction = actionCategory || isCritical;
+    // Direct manager→worker notes (recipient_id set) always create an action item
+    const isDirectNote = !!voiceNote.recipient_id;
+    const shouldCreateAction = actionCategory || isCritical || isDirectNote;
 
     if (shouldCreateAction) {
       const finalShortSummary = ai.short_summary || transcriptEn.substring(0, 100);
       const finalDetailedSummary = ai.detailed_summary || transcriptEn;
 
-      // Find manager for auto-assignment
-      let managerId = null;
-      if (voiceNote.users?.reports_to) {
-        managerId = voiceNote.users.reports_to;
+      // Determine assignment target:
+      // If recipient_id is set (manager→worker direct note), assign to recipient.
+      // Otherwise, find the manager to assign to (worker→manager flow).
+      let assigneeId = null;
+      if (voiceNote.recipient_id) {
+        assigneeId = voiceNote.recipient_id;
+        console.log(`  → Direct note: assigning action item to recipient ${assigneeId}`);
+      } else if (voiceNote.users?.reports_to) {
+        assigneeId = voiceNote.users.reports_to;
       } else {
         const { data: managers } = await supabase
           .from("users")
@@ -928,7 +935,7 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
           .limit(1);
 
         if (managers && managers.length > 0) {
-          managerId = managers[0].id;
+          assigneeId = managers[0].id;
         }
       }
 
@@ -972,7 +979,7 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
           project_id: voiceNote.project_id,
           account_id: voiceNote.account_id,
           user_id: voiceNote.user_id,
-          assigned_to: managerId,
+          assigned_to: assigneeId,
           confidence_score: confidenceScore,
           needs_review: needsReview,
           review_status: reviewStatus,
@@ -996,10 +1003,16 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
       );
 
       // Create urgent notification for critical items
-      if (isCritical && managerId) {
+      // Always notify a manager (even if assignee is the worker)
+      let notifyManagerId = assigneeId;
+      if (voiceNote.recipient_id) {
+        // For direct notes, notify the sender (manager) about critical keywords
+        notifyManagerId = voiceNote.user_id;
+      }
+      if (isCritical && notifyManagerId) {
         dbOperations.push(
           supabase.from("notifications").insert({
-            user_id: managerId,
+            user_id: notifyManagerId,
             account_id: voiceNote.account_id,
             project_id: voiceNote.project_id,
             type: 'critical_detected',
@@ -1012,7 +1025,7 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         console.log("✓ Critical notification queued for manager");
       }
 
-      console.log(`✓ Action item queued (critical=${isCritical}, confidence=${confidenceScore}, needs_review=${needsReview})`);
+      console.log(`✓ Action item queued (critical=${isCritical}, direct=${isDirectNote}, confidence=${confidenceScore}, needs_review=${needsReview})`);
     } else {
       console.log(`[6] No action item needed (intent=${finalIntent}, ambient update or information)`);
     }

@@ -7,7 +7,6 @@ import 'package:houzzdat_app/features/dashboard/tabs/actions_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/projects_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/team_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/feed_tab.dart';
-import 'package:houzzdat_app/features/dashboard/widgets/layout_toggle_button.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/critical_alert_banner.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/custom_bottom_nav.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/logout_dialog.dart';
@@ -175,7 +174,6 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
               onPressed: _handleSwitchCompany,
               tooltip: 'Switch Company',
             ),
-          const LayoutToggleButton(),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _handleLogout,

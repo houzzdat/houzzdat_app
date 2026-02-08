@@ -1,10 +1,18 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 
-/// Reusable audio player component for voice notes
-/// UPDATED: Enhanced error handling, validation, and user feedback
+// Conditional imports for web vs native
+import 'voice_note_audio_player_native.dart'
+    if (dart.library.html) 'voice_note_audio_player_web.dart'
+    as platform_player;
+
+/// Reusable audio player component for voice notes.
+///
+/// On web (PWA / mobile browser): uses HTML5 <audio> element directly,
+/// bypassing `audioplayers` which has known failures on iOS Safari.
+///
+/// On native (Android / iOS): uses `audioplayers` package.
 class VoiceNoteAudioPlayer extends StatefulWidget {
   final String audioUrl;
 
@@ -18,115 +26,65 @@ class VoiceNoteAudioPlayer extends StatefulWidget {
 }
 
 class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  late platform_player.AudioPlayerController _controller;
   bool _isPlaying = false;
   bool _hasError = false;
   String? _errorMessage;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
-  PlayerState _playerState = PlayerState.stopped;
 
   @override
   void initState() {
     super.initState();
-    _setupAudioPlayer();
-    _validateAudioUrl();
+    _validateAndInit();
   }
 
   @override
   void dispose() {
-    _audioPlayer.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
-  /// Validate audio URL before attempting playback
-  void _validateAudioUrl() {
-    if (widget.audioUrl.isEmpty) {
+  void _validateAndInit() {
+    if (widget.audioUrl.isEmpty ||
+        (!widget.audioUrl.startsWith('http://') &&
+            !widget.audioUrl.startsWith('https://'))) {
       setState(() {
         _hasError = true;
-        _errorMessage = 'Audio URL is empty';
+        _errorMessage = 'Invalid audio URL';
       });
       return;
     }
 
-    if (!widget.audioUrl.startsWith('http://') && 
-        !widget.audioUrl.startsWith('https://')) {
-      setState(() {
-        _hasError = true;
-        _errorMessage = 'Invalid audio URL format';
-      });
-      return;
-    }
-
-    // Check if URL has a valid audio extension
-    final validExtensions = ['.mp3', '.m4a', '.wav', '.webm', '.ogg', '.aac'];
-    final hasValidExtension = validExtensions.any(
-      (ext) => widget.audioUrl.toLowerCase().contains(ext)
-    );
-
-    if (!hasValidExtension) {
-      debugPrint('Warning: Audio URL may not have a valid audio extension: ${widget.audioUrl}');
-      // Don't set error - just log warning, as some URLs might still work
-    }
-  }
-
-  /// Setup audio player event listeners
-  void _setupAudioPlayer() {
-    // Duration changed - total length of audio
-    _audioPlayer.onDurationChanged.listen((duration) {
-      if (mounted) {
-        setState(() => _duration = duration);
-      }
-    });
-
-    // Position changed - current playback position
-    _audioPlayer.onPositionChanged.listen((position) {
-      if (mounted) {
-        setState(() => _position = position);
-      }
-    });
-
-    // Player state changed
-    _audioPlayer.onPlayerStateChanged.listen((state) {
-      if (mounted) {
-        setState(() => _playerState = state);
-      }
-    });
-
-    // Playback completed
-    _audioPlayer.onPlayerComplete.listen((_) {
-      if (mounted) {
-        setState(() {
-          _isPlaying = false;
-          _position = Duration.zero;
-          _playerState = PlayerState.completed;
-        });
-      }
-    });
-
-    // CRITICAL: Listen for async playback errors (network, codec, 404, CORS).
-    // audioplayers fires errors on this stream, NOT as thrown exceptions.
-    // Without this listener, failures are completely silent.
-    _audioPlayer.onLog.listen((String message) {
-      debugPrint('AudioPlayer log: $message');
-      // Detect error messages from the native player
-      if (message.toLowerCase().contains('error') ||
-          message.toLowerCase().contains('failed') ||
-          message.toLowerCase().contains('unable')) {
-        if (mounted && _isPlaying) {
+    _controller = platform_player.AudioPlayerController(
+      url: widget.audioUrl,
+      onDurationChanged: (d) {
+        if (mounted) setState(() => _duration = d);
+      },
+      onPositionChanged: (p) {
+        if (mounted) setState(() => _position = p);
+      },
+      onComplete: () {
+        if (mounted) {
+          setState(() {
+            _isPlaying = false;
+            _position = Duration.zero;
+          });
+        }
+      },
+      onError: (msg) {
+        if (mounted) {
           setState(() {
             _hasError = true;
-            _errorMessage = 'Audio playback failed. Tap retry.';
+            _errorMessage = msg;
             _isPlaying = false;
           });
         }
-      }
-    });
+      },
+    );
   }
 
-  /// Toggle play/pause
   Future<void> _togglePlayback() async {
-    // If there's an error, don't attempt playback
     if (_hasError) {
       _showErrorSnackbar();
       return;
@@ -134,49 +92,32 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
 
     try {
       if (_isPlaying) {
-        // Pause playback
-        await _audioPlayer.pause();
+        await _controller.pause();
         setState(() => _isPlaying = false);
       } else {
-        // Start or resume playback
         setState(() => _isPlaying = true);
-
-        if (_playerState == PlayerState.paused) {
-          // Resume from current position
-          await _audioPlayer.resume();
-        } else {
-          // Start fresh playback (or restart if completed)
-          debugPrint('Playing audio: ${widget.audioUrl}');
-          await _audioPlayer.play(UrlSource(widget.audioUrl))
-              .timeout(const Duration(seconds: 15), onTimeout: () {
-            throw TimeoutException('Audio took too long to load');
-          });
-        }
+        await _controller.play();
       }
     } catch (e) {
       debugPrint('Playback error: $e');
-
       if (mounted) {
         setState(() {
           _hasError = true;
-          _errorMessage = 'Failed to play audio: ${e is TimeoutException ? "Network timeout" : "Check connection"}';
+          _errorMessage = 'Failed to play audio';
           _isPlaying = false;
         });
-        _showErrorSnackbar();
       }
     }
   }
 
-  /// Seek to specific position
   Future<void> _seekTo(Duration position) async {
     try {
-      await _audioPlayer.seek(position);
+      await _controller.seek(position);
     } catch (e) {
       debugPrint('Seek error: $e');
     }
   }
 
-  /// Show error message to user
   void _showErrorSnackbar() {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -190,81 +131,70 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
               _hasError = false;
               _errorMessage = null;
             });
-            _togglePlayback();
+            _controller.dispose();
+            _validateAndInit();
           },
         ),
       ),
     );
   }
 
-  /// Format duration as MM:SS
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
   }
 
-  /// Build error state UI
-  Widget _buildErrorState() {
-    return Container(
-      padding: const EdgeInsets.all(AppTheme.spacingM),
-      decoration: BoxDecoration(
-        color: AppTheme.errorRed.withValues(alpha:0.1),
-        borderRadius: BorderRadius.circular(AppTheme.radiusM),
-        border: Border.all(color: AppTheme.errorRed.withValues(alpha:0.3)),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.error_outline,
-            color: AppTheme.errorRed,
-            size: 20,
-          ),
-          const SizedBox(width: AppTheme.spacingS),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Audio Unavailable',
-                  style: AppTheme.bodySmall.copyWith(
-                    color: AppTheme.errorRed,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (_errorMessage != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    _errorMessage!,
-                    style: AppTheme.caption.copyWith(
-                      color: AppTheme.errorRed,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh, color: AppTheme.errorRed),
-            onPressed: () {
-              setState(() {
-                _hasError = false;
-                _errorMessage = null;
-              });
-              _validateAudioUrl();
-            },
-            tooltip: 'Retry',
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    // Show error state if validation failed
     if (_hasError) {
-      return _buildErrorState();
+      return Container(
+        padding: const EdgeInsets.all(AppTheme.spacingM),
+        decoration: BoxDecoration(
+          color: AppTheme.errorRed.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(AppTheme.radiusM),
+          border: Border.all(color: AppTheme.errorRed.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: AppTheme.errorRed, size: 20),
+            const SizedBox(width: AppTheme.spacingS),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Audio Unavailable',
+                    style: AppTheme.bodySmall.copyWith(
+                      color: AppTheme.errorRed,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  if (_errorMessage != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      _errorMessage!,
+                      style: AppTheme.caption.copyWith(color: AppTheme.errorRed),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh, color: AppTheme.errorRed),
+              onPressed: () {
+                setState(() {
+                  _hasError = false;
+                  _errorMessage = null;
+                });
+                _controller.dispose();
+                _validateAndInit();
+              },
+              tooltip: 'Retry',
+            ),
+          ],
+        ),
+      );
     }
 
     return Container(
@@ -275,7 +205,6 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
       ),
       child: Row(
         children: [
-          // Play/Pause Button
           IconButton(
             icon: Icon(
               _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
@@ -285,25 +214,18 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
             onPressed: _togglePlayback,
             tooltip: _isPlaying ? 'Pause' : 'Play',
           ),
-          
-          // Playback Controls
           Expanded(
             child: Column(
               children: [
-                // Progress Slider
                 SliderTheme(
                   data: SliderTheme.of(context).copyWith(
                     trackHeight: 2,
-                    thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 6,
-                    ),
-                    overlayShape: const RoundSliderOverlayShape(
-                      overlayRadius: 12,
-                    ),
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
                     activeTrackColor: AppTheme.primaryIndigo,
-                    inactiveTrackColor: AppTheme.textSecondary.withValues(alpha:0.3),
+                    inactiveTrackColor: AppTheme.textSecondary.withValues(alpha: 0.3),
                     thumbColor: AppTheme.primaryIndigo,
-                    overlayColor: AppTheme.primaryIndigo.withValues(alpha:0.2),
+                    overlayColor: AppTheme.primaryIndigo.withValues(alpha: 0.2),
                   ),
                   child: Slider(
                     value: _position.inSeconds.toDouble().clamp(
@@ -318,24 +240,17 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
                     },
                   ),
                 ),
-                
-                // Time Labels
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppTheme.spacingS,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacingS),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
                         _formatDuration(_position),
-                        style: AppTheme.caption.copyWith(
-                          color: AppTheme.textSecondary,
-                        ),
+                        style: AppTheme.caption.copyWith(color: AppTheme.textSecondary),
                       ),
-                      // Show loading indicator if duration not yet loaded
                       if (_duration == Duration.zero && _isPlaying)
-                        SizedBox(
+                        const SizedBox(
                           width: 12,
                           height: 12,
                           child: CircularProgressIndicator(
@@ -346,9 +261,7 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
                       else
                         Text(
                           _formatDuration(_duration),
-                          style: AppTheme.caption.copyWith(
-                            color: AppTheme.textSecondary,
-                          ),
+                          style: AppTheme.caption.copyWith(color: AppTheme.textSecondary),
                         ),
                     ],
                   ),
@@ -356,16 +269,6 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
               ],
             ),
           ),
-          
-          // Speed Control (Optional - can be added later)
-          // IconButton(
-          //   icon: const Icon(Icons.speed, size: 20),
-          //   color: AppTheme.textSecondary,
-          //   onPressed: () {
-          //     // Implement playback speed control
-          //   },
-          //   tooltip: 'Playback speed',
-          // ),
         ],
       ),
     );
