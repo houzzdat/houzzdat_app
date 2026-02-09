@@ -580,7 +580,7 @@ Deno.serve(async (req) => {
     const needsASR = !voiceNote.transcript_raw_original;
     const needsTranslation = !voiceNote.transcript_en_original;
 
-    const [audioData, translationPromptResult, analysisPromptResult] = await Promise.all([
+    const [audioData, translationPromptResult, analysisPromptResult, glossaryResult, correctionsResult] = await Promise.all([
       // 1. Download audio once (only if needed for ASR)
       needsASR
         ? downloadAudioOnce(voiceNote.audio_url)
@@ -607,11 +607,30 @@ Deno.serve(async (req) => {
         .eq("is_active", true)
         .order("version", { ascending: false })
         .limit(1)
-        .maybeSingle()
+        .maybeSingle(),
+
+      // 4. Phase B: Fetch project-specific glossary terms
+      supabase
+        .from("site_glossary")
+        .select("term, definition, category")
+        .eq("project_id", voiceNote.project_id)
+        .eq("is_active", true)
+        .limit(50),
+
+      // 5. Phase C: Fetch recent AI corrections as few-shot examples
+      supabase
+        .from("ai_corrections")
+        .select("correction_type, original_value, corrected_value")
+        .eq("project_id", voiceNote.project_id)
+        .in("correction_type", ['category', 'priority', 'review_dismissed', 'promoted_to_action'])
+        .order("created_at", { ascending: false })
+        .limit(10)
     ]);
 
     const translationPrompt = translationPromptResult?.data;
     const analysisPrompt = analysisPromptResult?.data;
+    const glossaryTerms = glossaryResult?.data;
+    const recentCorrections = correctionsResult?.data;
 
     console.log(`  ✓ Prefetch completed in ${(performance.now() - prefetchStart).toFixed(0)}ms`);
 
@@ -691,9 +710,16 @@ Deno.serve(async (req) => {
       } else {
         // LLM text translation — translate the original-language transcript to English
         if (translationPrompt) {
+          // Phase B: Inject glossary terms for translation context
+          let glossaryHint = '';
+          if (glossaryTerms && glossaryTerms.length > 0) {
+            glossaryHint = '\n\nDomain-specific terms (preserve these in translation):\n' +
+              glossaryTerms.map((g: any) => `- "${g.term}" = ${g.definition}`).join('\n');
+          }
+
           const finalPrompt = translationPrompt.prompt
             .replace('{{LANGUAGE}}', LANGUAGE_NAMES[detectedLangCode] || detectedLangCode)
-            .replace('{{TRANSCRIPT}}', transcriptRaw);
+            .replace('{{TRANSCRIPT}}', transcriptRaw) + glossaryHint;
 
           const translationResponse = await callRegistryLLM(providerName, apiKey, {
             prompt: finalPrompt,
@@ -751,9 +777,40 @@ Deno.serve(async (req) => {
       console.warn("No active analysis prompt found, using fallback classifier");
       ai = fallbackClassify(transcriptEn);
     } else {
-      // Build contextual prompt with few-shot examples injected
-      const contextualPrompt = `${analysisPrompt.prompt}
+      // ── Phase B: Build glossary section for classification ──
+      let glossarySection = '';
+      if (glossaryTerms && glossaryTerms.length > 0) {
+        const entries = glossaryTerms.map((g: any) =>
+          `- "${g.term}" → ${g.definition} [${g.category}]`
+        ).join('\n');
+        glossarySection = `\nSITE-SPECIFIC GLOSSARY (use these definitions when interpreting the transcript):\n${entries}\n`;
+        console.log(`  → Injected ${glossaryTerms.length} glossary terms`);
+      }
 
+      // ── Phase C: Build corrections section as few-shot examples ──
+      let correctionsSection = '';
+      if (recentCorrections && recentCorrections.length > 0) {
+        const examples = recentCorrections.map((c: any) => {
+          switch (c.correction_type) {
+            case 'category':
+              return `- Classification "${c.original_value}" was corrected to "${c.corrected_value}"`;
+            case 'priority':
+              return `- Priority "${c.original_value}" was corrected to "${c.corrected_value}"`;
+            case 'review_dismissed':
+              return `- An item classified as "${c.original_value}" was dismissed by the manager as incorrect`;
+            case 'promoted_to_action':
+              return `- A message classified as "${c.original_value}" should have been "${c.corrected_value}" (manager manually promoted it)`;
+            default:
+              return `- "${c.original_value}" was corrected to "${c.corrected_value}"`;
+          }
+        }).join('\n');
+        correctionsSection = `\nRECENT MANAGER CORRECTIONS (learn from these to avoid repeating mistakes):\n${examples}\n`;
+        console.log(`  → Injected ${recentCorrections.length} correction examples`);
+      }
+
+      // Build contextual prompt with glossary + corrections + few-shot examples
+      const contextualPrompt = `${analysisPrompt.prompt}
+${glossarySection}${correctionsSection}
 PROJECT CONTEXT:
 - Project Name: ${voiceNote.projects?.name || 'Unknown Project'}
 - Speaker Role: ${voiceNote.users?.role || 'Unknown Role'}

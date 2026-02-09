@@ -358,6 +358,32 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     );
   }
 
+  // ─── AI Correction Recording (Phase C — self-improvement) ────
+
+  Future<void> _recordCorrection({
+    required String correctionType,
+    String? originalValue,
+    String? correctedValue,
+  }) async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+    try {
+      await _supabase.from('ai_corrections').insert({
+        'voice_note_id': widget.item['voice_note_id'],
+        'action_item_id': widget.item['id'],
+        'project_id': widget.item['project_id'],
+        'account_id': widget.item['account_id'],
+        'correction_type': correctionType,
+        'original_value': originalValue,
+        'corrected_value': correctedValue,
+        'corrected_by': userId,
+        'confidence_at_time': _getConfidenceScore(),
+      });
+    } catch (e) {
+      debugPrint('Error recording correction: $e');
+    }
+  }
+
   // ─── Interaction Recording (preserved) ────────────────────────
 
   Future<void> _recordInteraction(String action, String details) async {
@@ -586,6 +612,11 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     );
 
     if (reason != null && reason.isNotEmpty) {
+      await _recordCorrection(
+        correctionType: 'denied_with_reason',
+        originalValue: widget.item['summary']?.toString(),
+        correctedValue: reason,
+      );
       await _recordInteraction('denied', 'Denied with reason: $reason');
       await _updateStatus('completed', bypassProofGate: true);
       widget.onRefresh();
@@ -943,11 +974,19 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
   }
 
   Future<void> _handlePriorityChange(String priority) async {
+    final oldPriority = widget.item['priority']?.toString() ?? 'Med';
     await _supabase
         .from('action_items')
         .update({'priority': priority})
         .eq('id', widget.item['id']);
 
+    if (oldPriority != priority) {
+      await _recordCorrection(
+        correctionType: 'priority',
+        originalValue: oldPriority,
+        correctedValue: priority,
+      );
+    }
     await _recordInteraction('priority_changed', 'Priority set to $priority');
     widget.onRefresh();
   }
@@ -987,6 +1026,11 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
             .update({'summary': newSummary})
             .eq('id', widget.item['id']);
 
+        await _recordCorrection(
+          correctionType: 'summary',
+          originalValue: widget.item['summary']?.toString(),
+          correctedValue: newSummary,
+        );
         await _recordInteraction('summary_edited', 'Summary updated');
         widget.onRefresh();
       } catch (e) {
@@ -1086,6 +1130,11 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       'reviewed_by': userId,
       'reviewed_at': DateTime.now().toIso8601String(),
     }).eq('id', widget.item['id']);
+    await _recordCorrection(
+      correctionType: 'review_confirmed',
+      originalValue: '${widget.item['category']}/${widget.item['priority']}',
+      correctedValue: 'confirmed_as_correct',
+    );
     await _recordInteraction('review_confirmed', 'Manager confirmed AI-suggested action');
     widget.onRefresh();
   }
@@ -1099,6 +1148,11 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       'reviewed_at': DateTime.now().toIso8601String(),
       'status': 'completed',
     }).eq('id', widget.item['id']);
+    await _recordCorrection(
+      correctionType: 'review_dismissed',
+      originalValue: '${widget.item['category']}/${widget.item['priority']}',
+      correctedValue: 'dismissed_as_incorrect',
+    );
     await _recordInteraction('review_dismissed', 'Manager dismissed AI-suggested action');
     widget.onRefresh();
   }
