@@ -13,11 +13,15 @@ import 'dart:js_interop';
 class AudioRecorderService {
   final AudioRecorder _audioRecorder = AudioRecorder();
   final _supabase = Supabase.instance.client;
-  
+
   web.MediaRecorder? _mediaRecorder;
   web.MediaStream? _mediaStream;
   final List<web.Blob> _recordedChunks = [];
   Completer<Uint8List>? _completer;
+
+  /// MIME type actually used for web recording (detected at record time).
+  /// Prefer MP4/AAC (Safari + Chrome 121+) over WebM (Chrome-only playback).
+  String _webMimeType = 'audio/webm';
 
   Future<bool> checkPermission() async {
     if (kIsWeb) {
@@ -53,20 +57,34 @@ class AudioRecorderService {
             
         if (jsAnyStream != null) {
           _mediaStream = jsAnyStream as web.MediaStream;
-          _mediaRecorder = web.MediaRecorder(_mediaStream!);
+
+          // Detect best recording format — prefer MP4 for universal playback
+          if (web.MediaRecorder.isTypeSupported('audio/mp4')) {
+            _webMimeType = 'audio/mp4';
+          } else if (web.MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            _webMimeType = 'audio/webm;codecs=opus';
+          } else {
+            _webMimeType = 'audio/webm';
+          }
+          debugPrint('Recording format: $_webMimeType');
+
+          _mediaRecorder = web.MediaRecorder(
+            _mediaStream!,
+            web.MediaRecorderOptions(mimeType: _webMimeType),
+          );
           _recordedChunks.clear();
           _completer = Completer<Uint8List>();
-          
+
           _mediaRecorder!.ondataavailable = (web.BlobEvent event) {
             if (event.data.size > 0) {
               _recordedChunks.add(event.data);
             }
           }.toJS;
-          
+
           _mediaRecorder!.onstop = (web.Event event) {
             try {
               final blobParts = _recordedChunks.map((e) => e as JSAny).toList().toJS;
-              final blob = web.Blob(blobParts, web.BlobPropertyBag(type: 'audio/webm'));
+              final blob = web.Blob(blobParts, web.BlobPropertyBag(type: _webMimeType));
               final reader = web.FileReader();
               
               reader.onloadend = (web.ProgressEvent e) {
@@ -126,13 +144,15 @@ class AudioRecorderService {
     String? recipientId,
   }) async {
     try {
-      const ext = kIsWeb ? 'webm' : 'm4a';
-      const contentType = kIsWeb ? 'audio/webm' : 'audio/mp4';
+      // Use the format detected during recording (MP4 on Safari/Chrome 121+, WebM fallback)
+      final isMP4 = !kIsWeb || _webMimeType.contains('mp4');
+      final ext = isMP4 ? 'm4a' : 'webm';
+      final contentType = isMP4 ? 'audio/mp4' : 'audio/webm';
       final path = 'log_${DateTime.now().millisecondsSinceEpoch}.$ext';
 
       // Upload to storage with correct MIME type
       await _supabase.storage.from('voice-notes').uploadBinary(
-        path, bytes, fileOptions: const FileOptions(contentType: contentType, upsert: true)
+        path, bytes, fileOptions: FileOptions(contentType: contentType, upsert: true)
       );
       
       final String url = _supabase.storage.from('voice-notes').getPublicUrl(path);

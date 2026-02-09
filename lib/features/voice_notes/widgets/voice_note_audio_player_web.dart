@@ -22,6 +22,8 @@ class AudioPlayerController {
   Timer? _positionTimer;
   bool _disposed = false;
 
+  bool _formatUnsupported = false;
+
   AudioPlayerController({
     required this.url,
     required this.onDurationChanged,
@@ -30,6 +32,16 @@ class AudioPlayerController {
     required this.onError,
   }) {
     _audio = web.HTMLAudioElement();
+
+    // Check format compatibility before loading (Safari cannot play WebM)
+    final mimeType = _mimeTypeFromUrl(url);
+    if (mimeType != null && _audio.canPlayType(mimeType).isEmpty) {
+      _formatUnsupported = true;
+      onError('This audio was recorded in a format ($mimeType) that '
+          'your browser cannot play. Please use Chrome or Firefox.');
+      return;
+    }
+
     _audio.preload = 'metadata';
     _audio.src = url;
 
@@ -38,6 +50,17 @@ class AudioPlayerController {
     web.document.body?.append(_audio);
 
     _setupListeners();
+  }
+
+  /// Guess MIME type from the file extension in the URL.
+  static String? _mimeTypeFromUrl(String url) {
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
+    if (path.endsWith('.webm')) return 'audio/webm';
+    if (path.endsWith('.m4a') || path.endsWith('.mp4')) return 'audio/mp4';
+    if (path.endsWith('.mp3')) return 'audio/mpeg';
+    if (path.endsWith('.ogg')) return 'audio/ogg';
+    if (path.endsWith('.wav')) return 'audio/wav';
+    return null;
   }
 
   // ---- DOM event wiring ----
@@ -106,6 +129,7 @@ class AudioPlayerController {
   // ---- Public API ----
 
   Future<void> play() async {
+    if (_formatUnsupported) return;
     try {
       // The play() call returns a JS Promise — await it.
       await _audio.play().toDart;
@@ -136,6 +160,7 @@ class AudioPlayerController {
   void dispose() {
     _disposed = true;
     _stopPositionTimer();
+    if (_formatUnsupported) return;
     try {
       _audio.pause();
       _audio.src = ''; // release network connection
