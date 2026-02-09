@@ -31,7 +31,6 @@ class AudioPlayerController {
   }) {
     _audio = web.HTMLAudioElement();
     _audio.preload = 'metadata';
-    _audio.crossOrigin = 'anonymous';
     _audio.src = url;
 
     // Append off-screen so the browser creates a media session for it
