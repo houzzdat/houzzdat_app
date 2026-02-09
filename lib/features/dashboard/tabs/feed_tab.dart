@@ -258,7 +258,7 @@ class _FeedTabState extends State<FeedTab> {
     if (result == null) return;
 
     try {
-      await _supabase.from('action_items').insert({
+      final insertResult = await _supabase.from('action_items').insert({
         'voice_note_id': note['id'],
         'project_id': note['project_id'],
         'account_id': widget.accountId,
@@ -268,6 +268,18 @@ class _FeedTabState extends State<FeedTab> {
         'status': 'pending',
         'summary': note['transcript'] ?? note['transcript_final'] ?? 'Action from voice note',
         'ai_analysis': note['ai_analysis'],
+      }).select('id').single();
+
+      // Record correction: AI classified as "update" but manager promoted it
+      await _supabase.from('ai_corrections').insert({
+        'voice_note_id': note['id'],
+        'action_item_id': insertResult['id'],
+        'project_id': note['project_id'],
+        'account_id': widget.accountId,
+        'correction_type': 'promoted_to_action',
+        'original_value': 'update',
+        'corrected_value': result['category'],
+        'corrected_by': _supabase.auth.currentUser?.id,
       });
 
       if (mounted) {

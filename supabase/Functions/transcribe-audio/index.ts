@@ -172,7 +172,7 @@ Deno.serve(async (req) => {
     
     if (!transcriptEn) {
       console.log("[3] Running translation...");
-      
+
       if (detectedLangCode === 'en') {
         transcriptEn = transcriptRaw;
         console.log("✓ Transcript already in English");
@@ -187,10 +187,24 @@ Deno.serve(async (req) => {
           .limit(1)
           .maybeSingle();
 
+        // Phase B: Fetch glossary for translation context
+        const { data: transGlossary } = await supabase
+          .from("site_glossary")
+          .select("term, definition")
+          .eq("project_id", voiceNote.project_id)
+          .eq("is_active", true)
+          .limit(30);
+
+        let glossaryHint = '';
+        if (transGlossary && transGlossary.length > 0) {
+          glossaryHint = '\n\nDomain-specific terms (preserve these in translation):\n' +
+            transGlossary.map((g: any) => `- "${g.term}" = ${g.definition}`).join('\n');
+        }
+
         if (transPrompt) {
           const finalPrompt = transPrompt.prompt
             .replace('{{LANGUAGE}}', LANGUAGE_NAMES[detectedLangCode] || detectedLangCode)
-            .replace('{{TRANSCRIPT}}', transcriptRaw);
+            .replace('{{TRANSCRIPT}}', transcriptRaw) + glossaryHint;
 
           const translationResponse = await callRegistryLLM(providerName, apiKey, {
             prompt: finalPrompt,
@@ -231,9 +245,12 @@ Deno.serve(async (req) => {
 
     /* --------------------------------------------------
        PHASE 4: AI INTELLIGENCE & CLASSIFICATION
+       Now includes glossary injection (Phase B) and
+       few-shot correction examples (Phase C) for
+       self-improving accuracy.
     -------------------------------------------------- */
     console.log("[4] Running AI analysis...");
-    
+
     const { data: analysisPrompt } = await supabase
       .from("ai_prompts")
       .select("*")
@@ -248,9 +265,55 @@ Deno.serve(async (req) => {
       throw new Error("No active analysis prompt found");
     }
 
-    // Build contextual prompt by injecting transcript directly
-    const contextualPrompt = `${analysisPrompt.prompt}
+    // ── Phase B: Fetch project-specific glossary ──
+    let glossarySection = '';
+    const { data: glossaryTerms } = await supabase
+      .from("site_glossary")
+      .select("term, definition, category")
+      .eq("project_id", voiceNote.project_id)
+      .eq("is_active", true)
+      .limit(50);
 
+    if (glossaryTerms && glossaryTerms.length > 0) {
+      const entries = glossaryTerms.map((g: any) =>
+        `- "${g.term}" → ${g.definition} [${g.category}]`
+      ).join('\n');
+      glossarySection = `\nSITE-SPECIFIC GLOSSARY (use these definitions when interpreting the transcript):\n${entries}\n`;
+      console.log(`  → Injected ${glossaryTerms.length} glossary terms`);
+    }
+
+    // ── Phase C: Fetch recent corrections as few-shot examples ──
+    let correctionsSection = '';
+    const { data: recentCorrections } = await supabase
+      .from("ai_corrections")
+      .select("correction_type, original_value, corrected_value")
+      .eq("project_id", voiceNote.project_id)
+      .in("correction_type", ['category', 'priority', 'review_dismissed', 'promoted_to_action'])
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (recentCorrections && recentCorrections.length > 0) {
+      const examples = recentCorrections.map((c: any) => {
+        switch (c.correction_type) {
+          case 'category':
+            return `- Classification "${c.original_value}" was corrected to "${c.corrected_value}"`;
+          case 'priority':
+            return `- Priority "${c.original_value}" was corrected to "${c.corrected_value}"`;
+          case 'review_dismissed':
+            return `- An item classified as "${c.original_value}" was dismissed by the manager as incorrect`;
+          case 'promoted_to_action':
+            return `- A message classified as "${c.original_value}" should have been "${c.corrected_value}" (manager manually promoted it)`;
+          default:
+            return `- "${c.original_value}" was corrected to "${c.corrected_value}"`;
+        }
+      }).join('\n');
+      correctionsSection = `\nRECENT MANAGER CORRECTIONS (learn from these to avoid repeating mistakes):\n${examples}\n`;
+      console.log(`  → Injected ${recentCorrections.length} correction examples`);
+    }
+
+    // Build contextual prompt with glossary + corrections
+    const contextualPrompt = `${analysisPrompt.prompt}
+${glossarySection}${correctionsSection}
 PROJECT CONTEXT:
 - Project Name: ${voiceNote.projects?.name || 'Unknown Project'}
 - Speaker Role: ${voiceNote.users?.role || 'Unknown Role'}

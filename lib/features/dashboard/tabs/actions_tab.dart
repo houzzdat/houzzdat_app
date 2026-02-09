@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/action_card_widget.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/confidence_calibration_widget.dart';
 
 /// Classic list view of actions for Manager Dashboard
 /// Implements the SiteVoice Manager Action Lifecycle with filters, search, and sort
@@ -279,6 +280,9 @@ class _ActionsTabState extends State<ActionsTab> {
             ],
           ),
         ),
+
+        // AI Accuracy panel (Phase D)
+        ConfidenceCalibrationWidget(accountId: widget.accountId),
 
         // Results count when searching
         if (_searchQuery.isNotEmpty)
