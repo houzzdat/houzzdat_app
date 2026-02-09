@@ -713,28 +713,30 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
                       color: isCompleted ? AppTheme.textSecondary : catColor,
                     ),
                     Expanded(
-                      child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            if (isExpanded) {
-                              _expandedCardId = null;
-                            } else {
-                              _expandedCardId = taskId;
-                              // Lazy load voice note
-                              if (task['voice_note_id'] != null) {
-                                _loadVoiceNote(task['voice_note_id'].toString());
-                              }
-                            }
-                          });
-                        },
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildCollapsedContent(task),
-                            _buildActionRow(task),
-                            if (isExpanded) _buildExpandedContent(task),
-                          ],
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Only the collapsed content is tappable for expand/collapse
+                          InkWell(
+                            onTap: () {
+                              setState(() {
+                                if (isExpanded) {
+                                  _expandedCardId = null;
+                                } else {
+                                  _expandedCardId = taskId;
+                                  // Lazy load voice note
+                                  if (task['voice_note_id'] != null) {
+                                    _loadVoiceNote(task['voice_note_id'].toString());
+                                  }
+                                }
+                              });
+                            },
+                            child: _buildCollapsedContent(task),
+                          ),
+                          // Action buttons outside InkWell so taps aren't intercepted
+                          _buildActionRow(task),
+                          if (isExpanded) _buildExpandedContent(task),
+                        ],
                       ),
                     ),
                   ],
