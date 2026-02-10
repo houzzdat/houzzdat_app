@@ -454,10 +454,10 @@ class TeamDialogs {
 
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Error: ${e.toString()}'),
+                                const SnackBar(
+                                  content: Text('Could not invite user. Please check the details and try again.'),
                                   backgroundColor: AppTheme.errorRed,
-                                  duration: const Duration(seconds: 5),
+                                  duration: Duration(seconds: 5),
                                 ),
                               );
                             }
@@ -485,8 +485,8 @@ class TeamDialogs {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading roles: $e'),
+          const SnackBar(
+            content: Text('Could not load roles. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -817,7 +817,7 @@ class TeamDialogs {
                             Navigator.pop(context);
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('User updated successfully!'),
+                                content: Text('User updated'),
                                 backgroundColor: AppTheme.successGreen,
                               ),
                             );
@@ -827,10 +827,10 @@ class TeamDialogs {
 
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Error: $e'),
+                              const SnackBar(
+                                content: Text('Could not update user. Please try again.'),
                                 backgroundColor: AppTheme.errorRed,
-                                duration: const Duration(seconds: 5),
+                                duration: Duration(seconds: 5),
                               ),
                             );
                           }
@@ -855,8 +855,8 @@ class TeamDialogs {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading data: $e'),
+          const SnackBar(
+            content: Text('Could not load user data. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );

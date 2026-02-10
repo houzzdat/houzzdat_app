@@ -236,7 +236,7 @@ class _OwnerApprovalsTabState extends State<OwnerApprovalsTab> {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, controller.text),
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryIndigo),
-            child: const Text('Confirm', style: TextStyle(color: Colors.white)),
+            child: const Text('Submit', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -274,7 +274,7 @@ class _OwnerApprovalsTabState extends State<OwnerApprovalsTab> {
               ? const EmptyStateWidget(
                   icon: Icons.approval_outlined,
                   title: 'No Approvals',
-                  subtitle: 'No approval requests to show.',
+                  subtitle: 'Approval requests from your manager will appear here.',
                 )
               : RefreshIndicator(
                   onRefresh: _loadApprovals,

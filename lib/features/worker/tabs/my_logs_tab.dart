@@ -165,7 +165,7 @@ class _MyLogsTabState extends State<MyLogsTab> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Voice note submitted!'),
+                content: Text('Voice note submitted'),
                 backgroundColor: AppTheme.successGreen,
               ),
             );
@@ -177,7 +177,7 @@ class _MyLogsTabState extends State<MyLogsTab> {
         debugPrint('MyLogsTab: Recording error: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e')),
+            const SnackBar(content: Text('Could not send voice note. Please check your connection and try again.'), backgroundColor: AppTheme.errorRed),
           );
         }
       } finally {

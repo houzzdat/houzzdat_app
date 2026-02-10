@@ -103,7 +103,7 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
 
     if (result != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User invited successfully!')),
+        const SnackBar(content: Text('User invited'), backgroundColor: AppTheme.successGreen),
       );
     }
   }
@@ -195,19 +195,19 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
             ),
           );
         } else if (mounted) {
-          final error = response.data?['error'] ?? 'Failed to deactivate user';
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $error'),
+            const SnackBar(
+              content: Text('Could not deactivate user. Please try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );
         }
       } catch (e) {
+        debugPrint('Error deactivating user: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $e'),
+            const SnackBar(
+              content: Text('Something went wrong. Please try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );
@@ -241,19 +241,19 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
             ),
           );
         } else if (mounted) {
-          final error = response.data?['error'] ?? 'Failed to activate user';
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $error'),
+            const SnackBar(
+              content: Text('Could not reactivate user. Please try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );
         }
       } catch (e) {
+        debugPrint('Error activating user: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $e'),
+            const SnackBar(
+              content: Text('Something went wrong. Please try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );
@@ -287,19 +287,19 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
             ),
           );
         } else if (mounted) {
-          final error = response.data?['error'] ?? 'Failed to remove user';
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $error'),
+            const SnackBar(
+              content: Text('Could not remove user. Please try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );
         }
       } catch (e) {
+        debugPrint('Error removing user: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $e'),
+            const SnackBar(
+              content: Text('Something went wrong. Please try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );

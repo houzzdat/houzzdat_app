@@ -19,7 +19,7 @@ class OwnerProjectCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name = project['name'] ?? 'Unnamed Project';
+    final name = project['name'] ?? 'Untitled Site';
     final location = project['location'] ?? '';
     final totalActions = pendingCount + inProgressCount + completedCount;
 

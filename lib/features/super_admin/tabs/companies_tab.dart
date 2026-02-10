@@ -318,7 +318,7 @@ class CompaniesTabState extends State<CompaniesTab> {
 
       if (response.status == 200 && mounted) {
         final message =
-            response.data?['message'] ?? 'Action completed successfully';
+            response.data?['message'] ?? 'Company status updated';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
@@ -328,19 +328,19 @@ class CompaniesTabState extends State<CompaniesTab> {
         // Refresh the list after action
         _loadCompanies();
       } else if (mounted) {
-        final error = response.data?['error'] ?? 'Failed to $action company';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $error'),
+          const SnackBar(
+            content: Text('Could not update company status. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
       }
     } catch (e) {
+      debugPrint('Error managing company: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
+          const SnackBar(
+            content: Text('Something went wrong. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );

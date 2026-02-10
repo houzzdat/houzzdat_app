@@ -7,6 +7,7 @@ import 'package:houzzdat_app/core/services/company_context_service.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_projects_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_approvals_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_messages_tab.dart';
+import 'package:houzzdat_app/features/owner/tabs/owner_reports_tab.dart';
 
 class OwnerDashboard extends StatefulWidget {
   const OwnerDashboard({super.key});
@@ -24,6 +25,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
   int _currentIndex = 0;
   int _pendingApprovalCount = 0;
   int _unreadMessageCount = 0;
+  int _newReportCount = 0;
   StreamSubscription<int>? _notifSubscription;
 
   @override
@@ -60,6 +62,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
 
       _loadPendingApprovalCount();
       _loadUnreadMessageCount();
+      _loadNewReportCount();
 
       // Initialize notification service for real-time badge updates
       _notificationService.initialize(user.id);
@@ -123,6 +126,55 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
     }
   }
 
+  Future<void> _loadNewReportCount() async {
+    if (_ownerId == null || _accountId == null) return;
+    try {
+      // Count sent reports in the last 7 days for this owner's projects
+      final sevenDaysAgo = DateTime.now()
+          .subtract(const Duration(days: 7))
+          .toIso8601String();
+
+      // Get owner's project IDs
+      final projectOwners = await _supabase
+          .from('project_owners')
+          .select('project_id')
+          .eq('owner_id', _ownerId!);
+
+      final ownerProjectIds = (projectOwners as List)
+          .map((po) => po['project_id'].toString())
+          .toSet();
+
+      // Fetch recent sent reports for this account
+      final reports = await _supabase
+          .from('reports')
+          .select('id, project_ids')
+          .eq('account_id', _accountId!)
+          .eq('owner_report_status', 'sent')
+          .gte('sent_at', sevenDaysAgo);
+
+      int count = 0;
+      for (final report in reports) {
+        final projectIds = (report['project_ids'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            [];
+
+        // Empty project_ids means all projects — visible to all owners
+        if (projectIds.isEmpty) {
+          count++;
+        } else if (projectIds.any((pid) => ownerProjectIds.contains(pid))) {
+          count++;
+        }
+      }
+
+      if (mounted) {
+        setState(() => _newReportCount = count);
+      }
+    } catch (e) {
+      debugPrint('Error loading report count: $e');
+    }
+  }
+
   Future<void> _handleLogout() async {
     _notifSubscription?.cancel();
     await CompanyContextService().reset();
@@ -148,6 +200,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
         onApprovalChanged: _loadPendingApprovalCount,
       ),
       OwnerMessagesTab(ownerId: _ownerId!, accountId: _accountId!),
+      OwnerReportsTab(ownerId: _ownerId!, accountId: _accountId!),
     ];
 
     return Scaffold(
@@ -191,6 +244,14 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
               child: const Icon(Icons.message),
             ),
             label: 'Messages',
+          ),
+          BottomNavigationBarItem(
+            icon: Badge(
+              isLabelVisible: _newReportCount > 0,
+              label: Text('$_newReportCount'),
+              child: const Icon(Icons.assessment_outlined),
+            ),
+            label: 'Reports',
           ),
         ],
       ),

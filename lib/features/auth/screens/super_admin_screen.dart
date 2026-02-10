@@ -66,7 +66,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
       if (response.status == 200 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Account & Admin created successfully'),
+            content: Text('Account and admin created'),
             backgroundColor: AppTheme.successGreen,
           ),
         );
@@ -80,10 +80,9 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
         _companiesTabKey.currentState?.refresh();
         _tabController.animateTo(0);
       } else if (mounted) {
-        final error = response.data?['error'] ?? 'Failed to create account';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $error'),
+          const SnackBar(
+            content: Text('Could not create account. Please check the details and try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -92,8 +91,8 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
       debugPrint('Error onboarding company: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
+          const SnackBar(
+            content: Text('Something went wrong. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -112,7 +111,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
     return Scaffold(
       backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
-        title: const Text('SUPER ADMIN PANEL'),
+        title: const Text('Super Admin Panel'),
         backgroundColor: AppTheme.primaryIndigo,
         foregroundColor: AppTheme.textOnPrimary,
         elevation: 0,
@@ -173,7 +172,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'ONBOARD NEW COMPANY',
+            'Onboard New Company',
             style: AppTheme.bodySmall.copyWith(
               fontWeight: FontWeight.bold,
               letterSpacing: 1.0,
@@ -310,7 +309,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
               onPressed: _isLoading ? null : _onboardCompany,
               child: _isLoading
                   ? const CircularProgressIndicator(color: Colors.black)
-                  : const Text('INITIALIZE ACCOUNT',
+                  : const Text('Initialize Account',
                       style: TextStyle(
                           fontWeight: FontWeight.bold, fontSize: 16)),
             ),

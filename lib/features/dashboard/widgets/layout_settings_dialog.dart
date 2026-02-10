@@ -120,7 +120,7 @@ class _LayoutSettingsDialogState extends State<LayoutSettingsDialog> {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
-                              '✅ Switched to ${_selectedLayout.displayName}',
+                              'Switched to ${_selectedLayout.displayName}',
                             ),
                             backgroundColor: AppTheme.successGreen,
                             behavior: SnackBarBehavior.floating,

@@ -151,7 +151,7 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('⚠️ This transcription has already been edited. Only one edit is allowed.'),
+            content: Text('This transcription has already been edited. Only one edit is allowed.'),
             backgroundColor: AppTheme.warningOrange,
             duration: Duration(seconds: 3),
           ),
@@ -216,7 +216,7 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Transcription updated!'),
+            content: Text('Transcription updated'),
             backgroundColor: AppTheme.successGreen,
             duration: Duration(seconds: 2),
           ),
@@ -226,8 +226,8 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
       if (mounted) {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Error: ${e.toString()}'),
+          const SnackBar(
+            content: Text('Could not save transcription. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );

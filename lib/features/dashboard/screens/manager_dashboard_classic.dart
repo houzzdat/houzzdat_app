@@ -6,10 +6,11 @@ import 'package:houzzdat_app/core/services/company_context_service.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/actions_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/projects_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/team_tab.dart';
-import 'package:houzzdat_app/features/dashboard/tabs/feed_tab.dart';
+import 'package:houzzdat_app/features/finance/tabs/finance_tab.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/critical_alert_banner.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/custom_bottom_nav.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/logout_dialog.dart';
+import 'package:houzzdat_app/features/reports/screens/reports_screen.dart';
 
 class ManagerDashboardClassic extends StatefulWidget {
   const ManagerDashboardClassic({super.key});
@@ -123,7 +124,7 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Voice note submitted!'),
+                    content: Text('Voice note submitted'),
                     backgroundColor: AppTheme.successGreen,
                   ),
                 );
@@ -157,7 +158,7 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
       ProjectsTab(accountId: accountId),
       const SizedBox.shrink(), // Placeholder for central FAB
       TeamTab(accountId: accountId),
-      FeedTab(accountId: accountId),
+      FinanceTab(accountId: accountId),
     ];
 
     return Scaffold(
@@ -168,6 +169,17 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.assessment_outlined),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => ReportsScreen(accountId: accountId),
+                ),
+              );
+            },
+            tooltip: 'Reports',
+          ),
           if (_companyService.hasMultipleCompanies)
             IconButton(
               icon: const Icon(Icons.swap_horiz),

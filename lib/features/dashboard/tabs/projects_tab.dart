@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/project_dialogs.dart';
+import 'package:houzzdat_app/features/dashboard/screens/manager_site_detail_screen.dart';
 import 'package:intl/intl.dart';
 
 /// Projects/Sites tab with two sub-tabs:
@@ -351,6 +352,17 @@ class _SitesSubTabState extends State<_SitesSubTab>
                   final project = snap.data![i];
                   return _SiteGridCard(
                     project: project,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => ManagerSiteDetailScreen(
+                            project: project,
+                            accountId: widget.accountId,
+                          ),
+                        ),
+                      );
+                    },
                     onEdit: () => _handleEditProject(project),
                     onDelete: () => _handleDeleteProject(project),
                     onAssignUsers: () => _handleAssignUsers(project),
@@ -369,6 +381,7 @@ class _SitesSubTabState extends State<_SitesSubTab>
 /// Square site card with photo thumbnail for 2-column grid layout
 class _SiteGridCard extends StatefulWidget {
   final Map<String, dynamic> project;
+  final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onAssignUsers;
@@ -376,6 +389,7 @@ class _SiteGridCard extends StatefulWidget {
 
   const _SiteGridCard({
     required this.project,
+    required this.onTap,
     required this.onEdit,
     required this.onDelete,
     required this.onAssignUsers,
@@ -439,7 +453,9 @@ class _SiteGridCardState extends State<_SiteGridCard> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppTheme.radiusL),
@@ -640,6 +656,7 @@ class _SiteGridCardState extends State<_SiteGridCard> {
           ),
         ],
       ),
+    ),
     );
   }
 

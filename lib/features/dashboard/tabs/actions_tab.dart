@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/action_card_widget.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/confidence_calibration_widget.dart';
+import 'package:houzzdat_app/features/dashboard/tabs/feed_tab.dart';
 
 /// Classic list view of actions for Manager Dashboard
 /// Implements the SiteVoice Manager Action Lifecycle with filters, search, and sort
@@ -156,13 +157,15 @@ class _ActionsTabState extends State<ActionsTab> {
 
     return Column(
       children: [
-        // Search Bar
+        // Search Bar + Feed shortcut
         Container(
           padding: const EdgeInsets.fromLTRB(
             AppTheme.spacingM, AppTheme.spacingM, AppTheme.spacingM, 0,
           ),
           color: Colors.white,
-          child: TextField(
+          child: Row(
+            children: [
+              Expanded(child: TextField(
             controller: _searchController,
             onChanged: (value) => setState(() => _searchQuery = value),
             decoration: InputDecoration(
@@ -188,6 +191,30 @@ class _ActionsTabState extends State<ActionsTab> {
                 vertical: AppTheme.spacingS,
               ),
             ),
+          )),
+              const SizedBox(width: AppTheme.spacingS),
+              // Feed shortcut icon
+              IconButton(
+                icon: const Icon(Icons.feed_rounded, color: AppTheme.primaryIndigo),
+                tooltip: 'Voice Notes Feed',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => Scaffold(
+                        appBar: AppBar(
+                          title: const Text('VOICE NOTES FEED',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          backgroundColor: AppTheme.primaryIndigo,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                        ),
+                        body: FeedTab(accountId: widget.accountId),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ),
 

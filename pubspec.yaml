@@ -33,10 +33,15 @@ dependencies:
   geolocator_web: ^4.1.1
   # For persisting layout preference
   shared_preferences: ^2.2.2
+  # Reports feature
+  pdf: ^3.10.8
+  printing: ^5.12.0
+  flutter_markdown: ^0.7.3
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  mocktail: ^1.0.4
 
 flutter:
   # This MUST be here, not under dependencies, for icons to work.

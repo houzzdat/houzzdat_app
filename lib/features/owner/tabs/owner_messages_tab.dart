@@ -109,8 +109,8 @@ class _OwnerMessagesTabState extends State<OwnerMessagesTab> {
         debugPrint('Error uploading voice note: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error sending message: $e'),
+            const SnackBar(
+              content: Text('Could not send voice note. Please check your connection and try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );
@@ -239,7 +239,7 @@ class _OwnerMessagesTabState extends State<OwnerMessagesTab> {
                 if (_isRecording)
                   Expanded(
                     child: Text(
-                      'Recording... Tap to send',
+                      'Recording... Tap mic to stop and send',
                       style: AppTheme.bodyMedium.copyWith(color: AppTheme.errorRed),
                       textAlign: TextAlign.center,
                     ),

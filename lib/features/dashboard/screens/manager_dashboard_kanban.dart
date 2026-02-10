@@ -113,7 +113,7 @@ class _ManagerDashboardKanbanState extends State<ManagerDashboardKanban> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('✅ Voice note submitted!'),
+              content: Text('Voice note submitted'),
               backgroundColor: AppTheme.successGreen,
             ),
           );

@@ -52,8 +52,8 @@ class _RoleManagementDialogState extends State<RoleManagementDialog> {
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading roles: $e'),
+          const SnackBar(
+            content: Text('Could not load roles. Pull down to retry.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -98,7 +98,7 @@ class _RoleManagementDialogState extends State<RoleManagementDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ Role added successfully'),
+            content: Text('Role added'),
             backgroundColor: AppTheme.successGreen,
           ),
         );
@@ -110,8 +110,8 @@ class _RoleManagementDialogState extends State<RoleManagementDialog> {
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error adding role: $e'),
+          const SnackBar(
+            content: Text('Could not add role. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -170,7 +170,7 @@ class _RoleManagementDialogState extends State<RoleManagementDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ Role deleted successfully'),
+            content: Text('Role deleted'),
             backgroundColor: AppTheme.successGreen,
           ),
         );
@@ -182,8 +182,8 @@ class _RoleManagementDialogState extends State<RoleManagementDialog> {
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error deleting role: $e'),
+          const SnackBar(
+            content: Text('Could not delete role. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -252,7 +252,7 @@ class _RoleManagementDialogState extends State<RoleManagementDialog> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('✅ Added ${newRoles.length} default roles'),
+              content: Text('${newRoles.length} default roles added'),
               backgroundColor: AppTheme.successGreen,
             ),
           );
@@ -276,8 +276,8 @@ class _RoleManagementDialogState extends State<RoleManagementDialog> {
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading default roles: $e'),
+          const SnackBar(
+            content: Text('Could not load default roles. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );

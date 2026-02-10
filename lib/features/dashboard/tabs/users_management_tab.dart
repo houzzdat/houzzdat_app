@@ -65,7 +65,7 @@ class _UsersManagementTabState extends State<UsersManagementTab> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('✅ Voice note sent to ${user['full_name'] ?? user['email']}'),
+              content: Text('Voice note sent to ${user['full_name'] ?? user['email']}'),
               backgroundColor: AppTheme.successGreen,
             ),
           );

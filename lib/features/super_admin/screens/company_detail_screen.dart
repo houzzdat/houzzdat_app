@@ -678,8 +678,8 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $e'),
+            const SnackBar(
+              content: Text('Could not update provider. Please try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );

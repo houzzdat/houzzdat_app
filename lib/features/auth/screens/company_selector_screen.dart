@@ -39,8 +39,8 @@ class _CompanySelectorScreenState extends State<CompanySelectorScreen> {
       if (mounted) {
         setState(() => _isSelecting = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error selecting company: $e'),
+          const SnackBar(
+            content: Text('Could not switch company. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -74,7 +74,7 @@ class _CompanySelectorScreenState extends State<CompanySelectorScreen> {
     return Scaffold(
       backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
-        title: const Text('SELECT COMPANY'),
+        title: const Text('Select Company'),
         backgroundColor: AppTheme.primaryIndigo,
         foregroundColor: AppTheme.textOnPrimary,
         elevation: 0,

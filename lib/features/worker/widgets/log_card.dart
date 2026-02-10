@@ -220,8 +220,8 @@ class _LogCardState extends State<LogCard> {
       if (mounted) {
         setState(() => _isDeleting = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error deleting: $e'),
+          const SnackBar(
+            content: Text('Could not delete voice note. Please try again.'),
             backgroundColor: AppTheme.errorRed,
           ),
         );
@@ -253,7 +253,7 @@ class _LogCardState extends State<LogCard> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Reply sent!'),
+                content: Text('Reply sent'),
                 backgroundColor: AppTheme.successGreen,
               ),
             );

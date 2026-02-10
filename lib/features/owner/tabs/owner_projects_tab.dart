@@ -118,8 +118,8 @@ class _OwnerProjectsTabState extends State<OwnerProjectsTab> {
     if (_projects.isEmpty) {
       return const EmptyStateWidget(
         icon: Icons.business_outlined,
-        title: 'No Projects',
-        subtitle: 'You have no projects linked to your account yet. Ask your manager to add you.',
+        title: 'No Sites Yet',
+        subtitle: 'You have no sites linked to your account yet. Ask your manager to add you.',
       );
     }
 

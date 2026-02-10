@@ -74,7 +74,7 @@ class _SitesManagementTabState extends State<SitesManagementTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ Site deleted'),
+            content: Text('Site deleted'),
             backgroundColor: AppTheme.successGreen,
           ),
         );
