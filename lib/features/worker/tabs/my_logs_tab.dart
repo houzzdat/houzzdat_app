@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/worker/widgets/log_card.dart';
@@ -22,14 +21,11 @@ class MyLogsTab extends StatefulWidget {
   });
 
   @override
-  State<MyLogsTab> createState() => _MyLogsTabState();
+  State<MyLogsTab> createState() => MyLogsTabState();
 }
 
-class _MyLogsTabState extends State<MyLogsTab> {
+class MyLogsTabState extends State<MyLogsTab> {
   final _supabase = Supabase.instance.client;
-  final _recorderService = AudioRecorderService();
-  bool _isRecording = false;
-  bool _isUploading = false;
   bool _isLoading = true;
   String? _errorMessage;
   List<Map<String, dynamic>> _enrichedNotes = [];
@@ -118,73 +114,9 @@ class _MyLogsTabState extends State<MyLogsTab> {
         .subscribe();
   }
 
-  // ─── Recording Logic (unchanged) ────────────────────────────
-
-  Future<void> _handleRecording() async {
-    final hasPermission = await _recorderService.checkPermission();
-    if (!hasPermission) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Microphone permission required')),
-        );
-      }
-      return;
-    }
-
-    if (!_isRecording) {
-      // Check project assignment before starting recording
-      if (widget.projectId == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No project assigned. Please contact your manager.'),
-              backgroundColor: AppTheme.warningOrange,
-            ),
-          );
-        }
-        return;
-      }
-      await _recorderService.startRecording();
-      setState(() => _isRecording = true);
-    } else {
-      setState(() {
-        _isRecording = false;
-        _isUploading = true;
-      });
-
-      try {
-        final audioBytes = await _recorderService.stopRecording();
-        if (audioBytes != null && widget.projectId != null) {
-          await _recorderService.uploadAudio(
-            bytes: audioBytes,
-            projectId: widget.projectId!,
-            userId: widget.userId,
-            accountId: widget.accountId,
-          );
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Voice note submitted'),
-                backgroundColor: AppTheme.successGreen,
-              ),
-            );
-            // Refresh to show new note
-            _loadNotes();
-          }
-        }
-      } catch (e) {
-        debugPrint('MyLogsTab: Recording error: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not send voice note. Please check your connection and try again.'), backgroundColor: AppTheme.errorRed),
-          );
-        }
-      } finally {
-        if (mounted) setState(() => _isUploading = false);
-      }
-    }
-  }
+  /// Public method so the parent (ConstructionHomeScreen) can trigger
+  /// a refresh after recording via the persistent FAB.
+  void refreshNotes() => _loadNotes();
 
   // ─── Data Loading & Enrichment ──────────────────────────────
 
@@ -357,61 +289,9 @@ class _MyLogsTabState extends State<MyLogsTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // Record hero section (unchanged)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 24),
-          color: Colors.white,
-          child: Column(
-            children: [
-              Text(
-                _isUploading
-                    ? 'Uploading note...'
-                    : _isRecording
-                        ? 'Recording... Tap to stop'
-                        : 'Tap to Record Site Note',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF424242),
-                ),
-              ),
-              const SizedBox(height: 16),
-              GestureDetector(
-                onTap: _isUploading ? null : _handleRecording,
-                child: CircleAvatar(
-                  radius: 44,
-                  backgroundColor:
-                      _isRecording ? Colors.red : const Color(0xFFFFCA28),
-                  child: _isUploading
-                      ? const SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator(
-                            color: Colors.black,
-                            strokeWidth: 3,
-                          ),
-                        )
-                      : Icon(
-                          _isRecording ? LucideIcons.square : LucideIcons.mic,
-                          size: 32,
-                          color: Colors.black,
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 4),
-
-        // Notes list
-        Expanded(
-          child: _buildNotesList(),
-        ),
-      ],
-    );
+    // Recording is handled by the persistent FAB in ConstructionHomeScreen.
+    // This tab only shows the notes list.
+    return _buildNotesList();
   }
 
   Widget _buildNotesList() {
@@ -436,7 +316,7 @@ class _MyLogsTabState extends State<MyLogsTab> {
             Text('No voice notes yet',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 15)),
             const SizedBox(height: 4),
-            Text('Tap the mic above to create your first note',
+            Text('Tap the mic button to create your first note',
                 style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
           ],
         ),

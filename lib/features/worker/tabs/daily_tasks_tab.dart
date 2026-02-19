@@ -29,8 +29,9 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
   final _supabase = Supabase.instance.client;
   List<Map<String, dynamic>> _tasks = [];
   bool _isLoading = true;
-  String? _expandedCardId;
+  dynamic _expandedCardId; // Changed from String? to dynamic to support UUID
   RealtimeChannel? _channel;
+  RealtimeChannel? _voiceNotesChannel;
 
   // Cache voice note data loaded on expand
   final Map<String, Map<String, dynamic>> _voiceNoteCache = {};
@@ -40,11 +41,13 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
     super.initState();
     _loadTasks();
     _subscribeToRealtime();
+    _subscribeToVoiceNotes();
   }
 
   @override
   void dispose() {
     _channel?.unsubscribe();
+    _voiceNotesChannel?.unsubscribe();
     super.dispose();
   }
 
@@ -69,12 +72,39 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
         .subscribe();
   }
 
+  /// Subscribe to voice_notes where this worker is the recipient.
+  /// When the edge function finishes processing a direct voice note (status → 'completed'),
+  /// the action_item will have been created, so we reload tasks.
+  void _subscribeToVoiceNotes() {
+    _voiceNotesChannel = _supabase
+        .channel('worker-voice-notes-${widget.userId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'voice_notes',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'recipient_id',
+            value: widget.userId,
+          ),
+          callback: (payload) {
+            final newRecord = payload.newRecord;
+            // Reload tasks when a voice note finishes processing (action_item now exists)
+            if (newRecord['status'] == 'completed' && mounted) {
+              _loadTasks();
+            }
+          },
+        )
+        .subscribe();
+  }
+
   // ─── Data Loading ────────────────────────────────────────────
 
   Future<void> _loadTasks() async {
     setState(() => _isLoading = true);
     try {
-      final data = await _supabase
+      // Get action items assigned to this worker
+      final assignedItems = await _supabase
           .from('action_items')
           .select('''
             id, summary, details, status, category, priority, user_id,
@@ -85,6 +115,43 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
           .eq('account_id', widget.accountId)
           .eq('assigned_to', widget.userId)
           .order('created_at', ascending: false);
+
+      // Also get action items where voice note was sent directly to this worker.
+      // Uses explicit FK name to disambiguate — action_items has two FKs to voice_notes:
+      // action_items_voice_note_id_fkey (voice_note_id) and
+      // action_items_delegation_voice_note_id_fkey (delegation_voice_note_id).
+      // Without the explicit FK, PostgREST returns HTTP 300 or empty results.
+      List<dynamic> directMessages = [];
+      try {
+        directMessages = await _supabase
+            .from('action_items')
+            .select('''
+              id, summary, details, status, category, priority, user_id,
+              voice_note_id, created_at, updated_at, confidence_score,
+              ai_analysis, interaction_history, assigned_to,
+              users!action_items_user_id_fkey(full_name, email),
+              voice_notes!action_items_voice_note_id_fkey!inner(recipient_id)
+            ''')
+            .eq('account_id', widget.accountId)
+            .eq('voice_notes.recipient_id', widget.userId)
+            .order('created_at', ascending: false);
+      } catch (e) {
+        debugPrint('Error loading direct messages (non-fatal): $e');
+      }
+
+      // Combine and deduplicate
+      final allTasksMap = <String, Map<String, dynamic>>{};
+      for (final item in assignedItems) {
+        allTasksMap[item['id']] = Map<String, dynamic>.from(item);
+      }
+      for (final item in directMessages) {
+        final itemCopy = Map<String, dynamic>.from(item);
+        itemCopy.remove('voice_notes'); // Remove the joined data
+        allTasksMap[item['id']] = itemCopy;
+      }
+
+      final data = allTasksMap.values.toList()
+        ..sort((a, b) => (b['created_at'] as String).compareTo(a['created_at'] as String));
 
       if (mounted) {
         setState(() {
@@ -121,7 +188,7 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
   // ─── Actions ─────────────────────────────────────────────────
 
   Future<void> _handleComplete(Map<String, dynamic> task) async {
-    final taskId = task['id'].toString();
+    final taskId = task['id']; // Keep UUID as-is, don't convert to string
     final currentStatus = task['status']?.toString() ?? 'pending';
     final isCompleted = currentStatus == 'completed';
 
@@ -129,7 +196,7 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
 
     // Optimistic update
     setState(() {
-      final idx = _tasks.indexWhere((t) => t['id'].toString() == taskId);
+      final idx = _tasks.indexWhere((t) => t['id'] == taskId);
       if (idx != -1) _tasks[idx]['status'] = newStatus;
     });
 
@@ -138,9 +205,6 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
         'status': newStatus,
         'updated_at': DateTime.now().toIso8601String(),
       };
-      if (newStatus == 'completed') {
-        updateData['completed_at'] = DateTime.now().toIso8601String();
-      }
 
       await _supabase.from('action_items').update(updateData).eq('id', taskId);
 
@@ -152,7 +216,7 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
       // Revert on failure
       if (mounted) {
         setState(() {
-          final idx = _tasks.indexWhere((t) => t['id'].toString() == taskId);
+          final idx = _tasks.indexWhere((t) => t['id'] == taskId);
           if (idx != -1) _tasks[idx]['status'] = currentStatus;
         });
         ScaffoldMessenger.of(context).showSnackBar(
@@ -201,7 +265,7 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
 
   Future<void> _recordInteraction(
       Map<String, dynamic> task, String action, String details) async {
-    final taskId = task['id'].toString();
+    final taskId = task['id']; // Keep UUID as-is
     final existing = task['interaction_history'];
     final history = existing is List
         ? List<Map<String, dynamic>>.from(existing)
@@ -223,7 +287,7 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
       // Update local state
       if (mounted) {
         setState(() {
-          final idx = _tasks.indexWhere((t) => t['id'].toString() == taskId);
+          final idx = _tasks.indexWhere((t) => t['id'] == taskId);
           if (idx != -1) _tasks[idx]['interaction_history'] = history;
         });
       }
@@ -268,7 +332,7 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
       case 'Critical': return AppTheme.errorRed;
       case 'High': return AppTheme.warningOrange;
       case 'Med': return AppTheme.infoBlue;
-      case 'Low': return AppTheme.textSecondary;
+      case 'Low': return AppTheme.successGreen;
       default: return AppTheme.textSecondary;
     }
   }
@@ -284,98 +348,142 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
 
   // ─── Card Builders ───────────────────────────────────────────
 
-  Widget _buildActionBtn(String label, Color color, VoidCallback onPressed) {
+  Widget _buildActionBtn(IconData icon, String label, Color color, VoidCallback onPressed) {
     return Expanded(
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: color,
-          side: BorderSide(color: color.withValues(alpha: 0.5)),
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-          minimumSize: const Size(0, 32),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(6),
+      child: Material(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            height: 48,
+            alignment: Alignment.center,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 20, color: color),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color),
+                ),
+              ],
+            ),
           ),
         ),
-        child: Text(
-          label,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-        ),
       ),
+    );
+  }
+
+  /// Icon+color status badge (universal, no English text needed).
+  Widget _buildStatusIcon(String? status) {
+    final IconData icon;
+    final Color color;
+    switch (status) {
+      case 'completed':
+        icon = Icons.check_circle;
+        color = AppTheme.successGreen;
+      case 'in_progress':
+        icon = Icons.sync;
+        color = AppTheme.infoBlue;
+      case 'pending':
+        icon = Icons.access_time;
+        color = AppTheme.warningOrange;
+      default:
+        icon = Icons.access_time;
+        color = AppTheme.textSecondary;
+    }
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Icon(icon, size: 16, color: color),
+    );
+  }
+
+  /// Icon+color category badge (universal).
+  Widget _buildCategoryIcon(String? category) {
+    final IconData icon;
+    final Color color;
+    switch (category) {
+      case 'action_required':
+        icon = Icons.flash_on;
+        color = AppTheme.errorRed;
+      case 'approval':
+        icon = Icons.thumb_up_alt;
+        color = const Color(0xFF7B1FA2); // Purple
+      case 'update':
+        icon = Icons.info;
+        color = AppTheme.infoBlue;
+      default:
+        icon = Icons.task_alt;
+        color = AppTheme.textSecondary;
+    }
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Icon(icon, size: 16, color: color),
     );
   }
 
   Widget _buildCollapsedContent(Map<String, dynamic> task) {
     final isCompleted = task['status'] == 'completed';
     final category = task['category']?.toString();
-    final priority = task['priority']?.toString();
     final hasVoiceNote = task['voice_note_id'] != null;
     final managerName = _getManagerName(task);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 0),
+      padding: const EdgeInsets.fromLTRB(12, 12, 10, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Line 1: Priority + Category + Voice icon + Time
+          // Line 1: Category icon + Status icon + Voice icon + Time
           Row(
             children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: isCompleted ? AppTheme.textSecondary : _getPriorityColor(priority),
-                  shape: BoxShape.circle,
-                ),
-              ),
+              _buildCategoryIcon(category),
               const SizedBox(width: 6),
-              if (priority != null && !isCompleted)
-                Text(
-                  priority.toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: _getPriorityColor(priority),
-                  ),
-                ),
-              const SizedBox(width: 12),
-              Text(
-                _getCategoryLabel(category),
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: isCompleted ? AppTheme.textSecondary : _getCategoryColor(category),
-                ),
-              ),
+              _buildStatusIcon(task['status']?.toString()),
               if (hasVoiceNote) ...[
-                const SizedBox(width: 8),
-                Icon(LucideIcons.mic, size: 14,
-                    color: isCompleted ? AppTheme.textSecondary : AppTheme.primaryIndigo),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryIndigo.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Icon(LucideIcons.mic, size: 16,
+                      color: isCompleted ? AppTheme.textSecondary : AppTheme.primaryIndigo),
+                ),
               ],
               const Spacer(),
               Text(_timeAgo(task['created_at']?.toString()),
                   style: AppTheme.caption),
             ],
           ),
-          const SizedBox(height: 6),
-          // Line 2: Summary
+          const SizedBox(height: 8),
+          // Line 2: Summary (max 2 lines)
           Text(
             task['summary'] ?? 'Task',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 15,
               fontWeight: FontWeight.w600,
               color: isCompleted ? AppTheme.textSecondary : AppTheme.textPrimary,
               decoration: isCompleted ? TextDecoration.lineThrough : TextDecoration.none,
             ),
           ),
-          const SizedBox(height: 6),
-          // Line 3: Manager + Status badge
-          Row(
-            children: [
-              if (managerName.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          // Line 3: Manager avatar + name
+          if (managerName.isNotEmpty)
+            Row(
+              children: [
                 CircleAvatar(
                   radius: 12,
                   backgroundColor: AppTheme.primaryIndigo,
@@ -387,38 +495,15 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'From $managerName',
+                    managerName,
                     style: AppTheme.caption,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ] else
-                const Expanded(child: SizedBox()),
-              if (task['status'] != 'pending')
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: (task['status'] == 'completed'
-                            ? AppTheme.successGreen
-                            : AppTheme.infoBlue)
-                        .withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    (task['status'] ?? '').toString().toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: task['status'] == 'completed'
-                          ? AppTheme.successGreen
-                          : AppTheme.infoBlue,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 6),
+              ],
+            ),
+          const SizedBox(height: 8),
         ],
       ),
     );
@@ -428,17 +513,19 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
     final isCompleted = task['status'] == 'completed';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: Row(
         children: [
           _buildActionBtn(
+            LucideIcons.messageSquare,
             'ADD INFO',
             AppTheme.infoBlue,
             () => _handleAddInfo(task),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           _buildActionBtn(
-            isCompleted ? 'REOPEN' : 'COMPLETE',
+            isCompleted ? Icons.replay : Icons.check_circle_outline,
+            isCompleted ? 'REOPEN' : 'DONE',
             isCompleted ? AppTheme.warningOrange : AppTheme.successGreen,
             () => _handleComplete(task),
           ),
@@ -689,13 +776,13 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
         itemCount: _tasks.length,
         itemBuilder: (context, index) {
           final task = _tasks[index];
-          final taskId = task['id'].toString();
+          final taskId = task['id']; // Keep UUID as-is
           final isExpanded = _expandedCardId == taskId;
           final isCompleted = task['status'] == 'completed';
-          final catColor = _getCategoryColor(task['category']?.toString());
+          final priorityColor = _getPriorityColor(task['priority']?.toString());
 
           return Card(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
             elevation: isExpanded ? 3 : 1,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
@@ -707,10 +794,10 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Left priority/category border bar
+                    // Left priority border bar (red=Critical, orange=High, blue=Med, green=Low)
                     Container(
-                      width: 4,
-                      color: isCompleted ? AppTheme.textSecondary : catColor,
+                      width: 5,
+                      color: isCompleted ? AppTheme.textSecondary : priorityColor,
                     ),
                     Expanded(
                       child: Column(

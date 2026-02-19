@@ -402,28 +402,9 @@ class _LogCardState extends State<LogCard> {
   // ─── Transcript Preview (collapsed) ──────────────────────────
 
   Widget _buildTranscriptPreview() {
-    // Still waiting for ASR — show spinner
+    // Still waiting for ASR — show processing stepper
     if (_isProcessing) {
-      return Row(
-        children: [
-          const SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: AppTheme.textSecondary,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'Transcribing...',
-            style: AppTheme.bodySmall.copyWith(
-              color: AppTheme.textSecondary,
-              fontStyle: FontStyle.italic,
-            ),
-          ),
-        ],
-      );
+      return const _ProcessingStepper(status: 'processing');
     }
 
     final text = _nativeTranscript;
@@ -457,30 +438,10 @@ class _LogCardState extends State<LogCard> {
             overflow: _isExpanded ? null : TextOverflow.ellipsis,
           ),
 
-        // Show inline progress for translation/analysis
-        if (!_isCompleted && _hasTranscript) ...[
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              SizedBox(
-                width: 10,
-                height: 10,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.5,
-                  color: AppTheme.infoBlue.withValues(alpha: 0.6),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                _isTranscribed ? 'Translating...' : 'Analysing...',
-                style: AppTheme.caption.copyWith(
-                  color: AppTheme.infoBlue.withValues(alpha: 0.7),
-                  fontStyle: FontStyle.italic,
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ),
+        // Processing stepper: 3 dots showing progress through stages
+        if (!_isCompleted) ...[
+          const SizedBox(height: 8),
+          _ProcessingStepper(status: _status),
         ],
       ],
     );
@@ -943,6 +904,88 @@ class _TypewriterTextState extends State<_TypewriterText>
       style: widget.style,
       maxLines: widget.maxLines,
       overflow: widget.maxLines != null ? TextOverflow.ellipsis : null,
+    );
+  }
+}
+
+// ─── Processing Stepper Widget ──────────────────────────────────
+
+/// Horizontal stepper with 3 colored dots showing voice note processing stages:
+/// Mic (recorded) → Text (transcribed) → Checkmark (completed).
+/// Dots fill in progressively as the note passes through each stage.
+class _ProcessingStepper extends StatelessWidget {
+  final String status;
+  const _ProcessingStepper({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    // Determine which stages are complete
+    // Status progression: processing → transcribed → translated → completed
+    final int stage;
+    switch (status) {
+      case 'completed':
+        stage = 3;
+      case 'translated':
+        stage = 2;
+      case 'transcribed':
+        stage = 2;
+      case 'processing':
+        stage = 1;
+      default:
+        stage = 0;
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _stepDot(Icons.mic, stage >= 1, stage == 1),
+        _stepLine(stage >= 2),
+        _stepDot(Icons.text_fields, stage >= 2, stage == 2 && status != 'completed'),
+        _stepLine(stage >= 3),
+        _stepDot(Icons.check, stage >= 3, false),
+      ],
+    );
+  }
+
+  Widget _stepDot(IconData icon, bool filled, bool active) {
+    final color = filled ? AppTheme.successGreen : AppTheme.textSecondary.withValues(alpha: 0.3);
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: filled ? color.withValues(alpha: 0.15) : Colors.grey.withValues(alpha: 0.08),
+        border: Border.all(
+          color: active ? AppTheme.infoBlue : color,
+          width: active ? 2 : 1.5,
+        ),
+      ),
+      child: active
+          ? SizedBox(
+              width: 14,
+              height: 14,
+              child: Center(
+                child: SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppTheme.infoBlue,
+                  ),
+                ),
+              ),
+            )
+          : Icon(icon, size: 14, color: filled ? AppTheme.successGreen : AppTheme.textSecondary.withValues(alpha: 0.4)),
+    );
+  }
+
+  Widget _stepLine(bool filled) {
+    return Container(
+      width: 20,
+      height: 2,
+      color: filled
+          ? AppTheme.successGreen.withValues(alpha: 0.5)
+          : AppTheme.textSecondary.withValues(alpha: 0.15),
     );
   }
 }

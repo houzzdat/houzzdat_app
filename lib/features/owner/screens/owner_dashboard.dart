@@ -8,6 +8,7 @@ import 'package:houzzdat_app/features/owner/tabs/owner_projects_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_approvals_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_messages_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_reports_tab.dart';
+import 'package:houzzdat_app/features/insights/screens/insights_screen.dart';
 
 class OwnerDashboard extends StatefulWidget {
   const OwnerDashboard({super.key});
@@ -210,6 +211,18 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
         backgroundColor: AppTheme.primaryIndigo,
         foregroundColor: Colors.white,
         actions: [
+          if (_accountId != null)
+            IconButton(
+              icon: const Icon(Icons.insights),
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => InsightsScreen(accountId: _accountId!),
+                  ),
+                );
+              },
+              tooltip: 'Insights',
+            ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _handleLogout,

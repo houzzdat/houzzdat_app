@@ -105,6 +105,11 @@ class _SummaryTabState extends State<_SummaryTab> {
   int _todayVoiceNotes = 0;
   bool _isLoading = true;
 
+  // Trajectory data
+  int _daysSinceLastActivity = 0;
+  int _completedLastWeek = 0;
+  int _completedThisWeek = 0;
+
   @override
   void initState() {
     super.initState();
@@ -151,17 +156,48 @@ class _SummaryTabState extends State<_SummaryTab> {
           .eq('current_project_id', widget.projectId);
 
       // Today's voice notes count
-      final todayStart = DateTime(
-        DateTime.now().year,
-        DateTime.now().month,
-        DateTime.now().day,
-      ).toIso8601String();
+      final now = DateTime.now();
+      final todayStart = DateTime(now.year, now.month, now.day).toIso8601String();
 
       final todayNotes = await _supabase
           .from('voice_notes')
           .select('id')
           .eq('project_id', widget.projectId)
           .gte('created_at', todayStart);
+
+      // Trajectory: days since last activity
+      int daysSinceActivity = 0;
+      if (actionItems.isNotEmpty) {
+        final dates = actionItems
+            .map((a) => a['created_at']?.toString())
+            .where((d) => d != null)
+            .toList();
+        if (dates.isNotEmpty) {
+          dates.sort((a, b) => b!.compareTo(a!));
+          final lastDate = DateTime.tryParse(dates.first!);
+          if (lastDate != null) {
+            daysSinceActivity = now.difference(lastDate).inDays;
+          }
+        }
+      }
+
+      // Trajectory: completed this week vs last week
+      final weekStart = now.subtract(Duration(days: now.weekday - 1));
+      final lastWeekStart = weekStart.subtract(const Duration(days: 7));
+      int completedThisWeek = 0;
+      int completedLastWeek = 0;
+      for (final item in actionItems) {
+        if (item['status'] != 'completed') continue;
+        final dateStr = item['created_at']?.toString();
+        if (dateStr == null) continue;
+        final date = DateTime.tryParse(dateStr);
+        if (date == null) continue;
+        if (date.isAfter(weekStart)) {
+          completedThisWeek++;
+        } else if (date.isAfter(lastWeekStart)) {
+          completedLastWeek++;
+        }
+      }
 
       if (mounted) {
         setState(() {
@@ -170,6 +206,9 @@ class _SummaryTabState extends State<_SummaryTab> {
           _recentActions = recentActions;
           _workerCount = (workers as List).length;
           _todayVoiceNotes = (todayNotes as List).length;
+          _daysSinceLastActivity = daysSinceActivity;
+          _completedThisWeek = completedThisWeek;
+          _completedLastWeek = completedLastWeek;
           _isLoading = false;
         });
       }
@@ -255,6 +294,12 @@ class _SummaryTabState extends State<_SummaryTab> {
                 '${total > 0 ? (completed / total * 100).toStringAsFixed(0) : 0}% complete',
                 style: AppTheme.caption,
               ),
+              const SizedBox(height: AppTheme.spacingL),
+            ],
+
+            // Completion trajectory
+            if (total > 0) ...[
+              _buildTrajectoryCard(total, completed),
               const SizedBox(height: AppTheme.spacingL),
             ],
 
@@ -366,6 +411,120 @@ class _SummaryTabState extends State<_SummaryTab> {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildTrajectoryCard(int total, int completed) {
+    // Determine trajectory: improving, stable, or declining
+    final String trajectory;
+    final IconData trajectoryIcon;
+    final Color trajectoryColor;
+
+    if (_completedThisWeek > _completedLastWeek) {
+      trajectory = 'Improving';
+      trajectoryIcon = Icons.trending_up;
+      trajectoryColor = AppTheme.successGreen;
+    } else if (_completedThisWeek == _completedLastWeek) {
+      trajectory = 'Stable';
+      trajectoryIcon = Icons.trending_flat;
+      trajectoryColor = AppTheme.infoBlue;
+    } else {
+      trajectory = 'Slowing Down';
+      trajectoryIcon = Icons.trending_down;
+      trajectoryColor = AppTheme.warningOrange;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppTheme.spacingM),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.radiusL),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('Completion Trajectory', style: AppTheme.headingSmall),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: trajectoryColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(trajectoryIcon, size: 16, color: trajectoryColor),
+                    const SizedBox(width: 4),
+                    Text(trajectory, style: TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.bold, color: trajectoryColor,
+                    )),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppTheme.spacingM),
+          // Completion rate comparison
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  children: [
+                    Text('$_completedThisWeek', style: TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.bold, color: trajectoryColor,
+                    )),
+                    Text('Done This Week', style: AppTheme.caption),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: trajectoryColor.withValues(alpha: 0.08),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(trajectoryIcon, size: 20, color: trajectoryColor),
+              ),
+              Expanded(
+                child: Column(
+                  children: [
+                    Text('$_completedLastWeek', style: const TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.bold, color: AppTheme.textSecondary,
+                    )),
+                    Text('Done Last Week', style: AppTheme.caption),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppTheme.spacingM),
+          // Days since last activity
+          Row(
+            children: [
+              Icon(
+                _daysSinceLastActivity == 0 ? Icons.check_circle : Icons.access_time,
+                size: 16,
+                color: _daysSinceLastActivity > 2 ? AppTheme.warningOrange : AppTheme.successGreen,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _daysSinceLastActivity == 0
+                    ? 'Active today'
+                    : '$_daysSinceLastActivity day${_daysSinceLastActivity == 1 ? '' : 's'} since last activity',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _daysSinceLastActivity > 2 ? AppTheme.warningOrange : AppTheme.textSecondary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

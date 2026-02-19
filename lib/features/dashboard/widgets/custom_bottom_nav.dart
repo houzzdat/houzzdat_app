@@ -5,6 +5,7 @@ class CustomBottomNav extends StatelessWidget {
   final int currentIndex;
   final Function(int) onTabSelected;
   final VoidCallback onCentralMicTap;
+  final VoidCallback? onCentralMicLongPress;
   final bool isRecording;
 
   const CustomBottomNav({
@@ -12,6 +13,7 @@ class CustomBottomNav extends StatelessWidget {
     required this.currentIndex,
     required this.onTabSelected,
     required this.onCentralMicTap,
+    this.onCentralMicLongPress,
     required this.isRecording,
   });
 
@@ -71,12 +73,13 @@ class CustomBottomNav extends StatelessWidget {
                 ],
               ),
               
-              // Central FAB
+              // Central FAB (tap = project note, long-press = broadcast)
               Positioned(
                 left: MediaQuery.of(context).size.width / 2 - 32,
                 top: -16, // Raised above the bar
                 child: GestureDetector(
                   onTap: onCentralMicTap,
+                  onLongPress: onCentralMicLongPress,
                   child: Container(
                     width: 64,
                     height: 64,

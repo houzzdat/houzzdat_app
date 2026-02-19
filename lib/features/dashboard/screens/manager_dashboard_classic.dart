@@ -1,8 +1,10 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'package:houzzdat_app/core/services/company_context_service.dart';
+import 'package:houzzdat_app/core/services/broadcast_service.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/actions_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/projects_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/team_tab.dart';
@@ -10,7 +12,11 @@ import 'package:houzzdat_app/features/finance/tabs/finance_tab.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/critical_alert_banner.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/custom_bottom_nav.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/logout_dialog.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/recipient_selector_dialog.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/broadcast_voice_dialog.dart';
 import 'package:houzzdat_app/features/reports/screens/reports_screen.dart';
+import 'package:houzzdat_app/features/insights/screens/insights_screen.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/confidence_calibration_widget.dart';
 
 class ManagerDashboardClassic extends StatefulWidget {
   const ManagerDashboardClassic({super.key});
@@ -86,6 +92,60 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
     });
   }
 
+  /// Show settings bottom sheet with AI calibration widget.
+  void _showSettingsSheet(String accountId) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Row(
+                children: [
+                  const Text('AI SETTINGS',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                controller: scrollController,
+                padding: const EdgeInsets.all(16),
+                child: ConfidenceCalibrationWidget(accountId: accountId),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Single tap on central mic → project note (most common action).
   Future<void> _handleCentralMicTap() async {
     if (_accountId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -93,7 +153,22 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
       );
       return;
     }
+    await _handleProjectNote();
+  }
 
+  /// Long-press on central mic → broadcast to team members.
+  Future<void> _handleCentralMicLongPress() async {
+    if (_accountId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No account found. Contact admin.')),
+      );
+      return;
+    }
+    await _handleBroadcast();
+  }
+
+  /// Handles recording a project note (existing behavior)
+  Future<void> _handleProjectNote() async {
     if (!_isRecording) {
       await _recorderService.startRecording();
       setState(() => _isRecording = true);
@@ -138,6 +213,90 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
     }
   }
 
+  /// Handles broadcasting a message to selected team members
+  Future<void> _handleBroadcast() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return;
+
+    // Step 1: Select recipients
+    if (!mounted) return;
+    final recipients = await showDialog<List<String>>(
+      context: context,
+      builder: (context) => RecipientSelectorDialog(
+        accountId: _accountId!,
+        managerId: user.id,
+      ),
+    );
+
+    if (!mounted) return;
+    if (recipients == null || recipients.isEmpty) return;
+
+    // Step 2: Record voice with confirmation
+    if (!mounted) return;
+    final recordingResult = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => BroadcastVoiceDialog(
+        accountId: _accountId!,
+        projectId: '', // Broadcasts aren't tied to specific projects
+        recipientCount: recipients.length,
+      ),
+    );
+
+    if (!mounted) return;
+    if (recordingResult == null) return; // User cancelled
+
+    final audioBytes = recordingResult['audioBytes'] as Uint8List;
+    final textNote = recordingResult['textNote'] as String?;
+
+    // Step 3: Send broadcast
+    try {
+      // Get current project ID for the broadcast
+      final userData = await _supabase
+          .from('users')
+          .select('current_project_id')
+          .eq('id', user.id)
+          .single();
+      final projectId = userData['current_project_id']?.toString() ?? '';
+
+      final result = await BroadcastService().sendBroadcast(
+        audioBytes: audioBytes,
+        accountId: _accountId!,
+        projectId: projectId,
+        senderId: user.id,
+        recipientIds: recipients,
+        textNote: textNote,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('Broadcast sent to ${result.recipientCount} team members'),
+                ),
+              ],
+            ),
+            backgroundColor: AppTheme.successGreen,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error sending broadcast: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send broadcast'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_accountId == null || _accountId!.isEmpty) {
@@ -170,6 +329,17 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
         elevation: 0,
         actions: [
           IconButton(
+            icon: const Icon(Icons.insights),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => InsightsScreen(accountId: accountId),
+                ),
+              );
+            },
+            tooltip: 'Insights',
+          ),
+          IconButton(
             icon: const Icon(Icons.assessment_outlined),
             onPressed: () {
               Navigator.of(context).push(
@@ -179,6 +349,11 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
               );
             },
             tooltip: 'Reports',
+          ),
+          IconButton(
+            icon: const Icon(Icons.tune),
+            onPressed: () => _showSettingsSheet(accountId),
+            tooltip: 'Settings',
           ),
           if (_companyService.hasMultipleCompanies)
             IconButton(
@@ -217,6 +392,7 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
           }
         },
         onCentralMicTap: _handleCentralMicTap,
+        onCentralMicLongPress: _handleCentralMicLongPress,
         isRecording: _isRecording,
       ),
     );

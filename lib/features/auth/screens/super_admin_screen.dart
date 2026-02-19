@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/super_admin/tabs/companies_tab.dart';
+import 'package:houzzdat_app/features/super_admin/tabs/health_score_config_tab.dart';
+import 'package:houzzdat_app/features/super_admin/tabs/ai_evals_tab.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/team_dialogs.dart'
     show kAvailableLanguages;
 
@@ -28,7 +30,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -128,6 +130,8 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
           unselectedLabelColor: Colors.white70,
           indicatorColor: AppTheme.accentAmber,
           indicatorWeight: 3,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
           tabs: const [
             Tab(
               child: Row(
@@ -149,6 +153,26 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
                 ],
               ),
             ),
+            Tab(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.tune, size: 18),
+                  SizedBox(width: 6),
+                  Text('Settings'),
+                ],
+              ),
+            ),
+            Tab(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.psychology, size: 18),
+                  SizedBox(width: 6),
+                  Text('AI Evals'),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -160,6 +184,12 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
 
           // Tab 1: Onboard new company form
           _buildOnboardTab(),
+
+          // Tab 2: Settings (health score weights, etc.)
+          const HealthScoreConfigTab(),
+
+          // Tab 3: AI Evals dashboard links
+          const AiEvalsTab(),
         ],
       ),
     );

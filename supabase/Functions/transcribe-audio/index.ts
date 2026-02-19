@@ -1160,6 +1160,24 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
 
     console.log(`  ✓ All ${dbOperations.length} writes completed in ${(performance.now() - writeStart).toFixed(0)}ms`);
 
+    // Fire-and-forget webhook to agent orchestrator
+    const agentWebhookUrl = Deno.env.get('AGENT_WEBHOOK_URL');
+    if (agentWebhookUrl) {
+      fetch(agentWebhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('AGENT_WEBHOOK_SECRET')}`,
+        },
+        body: JSON.stringify({
+          voice_note_id: voiceNoteId,
+          timestamp: new Date().toISOString(),
+        }),
+      }).catch((webhookErr: Error) =>
+        console.error('Agent webhook failed:', webhookErr.message)
+      );
+    }
+
     const totalTime = performance.now() - pipelineStart;
     console.log(`✓ Fields populated: transcript_raw_original=${!!transcriptRaw}, transcript_en_original=${!!transcriptEn}, asr_confidence=${asrConfidence}`);
     console.log(`=== Processing Complete in ${(totalTime / 1000).toFixed(2)}s ===`);

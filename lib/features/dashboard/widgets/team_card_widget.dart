@@ -25,6 +25,9 @@ class TeamCardWidget extends StatefulWidget {
   /// Whether this user's role is 'admin' (prevents deactivate/remove)
   final bool isAdminUser;
 
+  /// Whether this user is currently on site (has an open attendance session today)
+  final bool isOnSite;
+
   const TeamCardWidget({
     super.key,
     required this.user,
@@ -36,6 +39,7 @@ class TeamCardWidget extends StatefulWidget {
     this.onActivate,
     this.onRemove,
     this.isAdminUser = false,
+    this.isOnSite = false,
   });
 
   @override
@@ -177,28 +181,32 @@ class _TeamCardWidgetState extends State<TeamCardWidget> {
                             ),
                           ],
                           const SizedBox(height: 4),
-                          Row(
+                          Wrap(
+                            spacing: AppTheme.spacingS,
+                            runSpacing: 4,
                             children: [
                               CategoryBadge(
                                 text: role.toUpperCase(),
                                 color: roleColor,
                               ),
-                              if (_projectName != null && _isActive) ...[
-                                const SizedBox(width: AppTheme.spacingS),
+                              if (_projectName != null && _isActive)
                                 CategoryBadge(
                                   text: _projectName!,
                                   color: AppTheme.successGreen,
                                   icon: Icons.location_on_rounded,
                                 ),
-                              ],
-                              if (!_isActive) ...[
-                                const SizedBox(width: AppTheme.spacingS),
+                              if (widget.isOnSite && _isActive)
+                                const CategoryBadge(
+                                  text: 'ON SITE',
+                                  color: AppTheme.successGreen,
+                                  icon: Icons.check_circle,
+                                ),
+                              if (!_isActive)
                                 const CategoryBadge(
                                   text: 'INACTIVE',
                                   color: AppTheme.textSecondary,
                                   icon: Icons.pause_circle,
                                 ),
-                              ],
                             ],
                           ),
                           // Deactivated date

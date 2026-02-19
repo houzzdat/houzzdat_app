@@ -322,6 +322,8 @@ class _AttendanceTabState extends State<AttendanceTab> {
   // ────────────────────── STATUS CARD ──────────────────────
 
   Widget _buildStatusCard() {
+    final isCheckedIn = _status == AttendanceStatus.checkedIn;
+
     return Card(
       elevation: 3,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -329,44 +331,47 @@ class _AttendanceTabState extends State<AttendanceTab> {
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
-            Icon(
-              _status == AttendanceStatus.checkedIn
-                  ? LucideIcons.hardHat
-                  : LucideIcons.logIn,
-              size: 48,
-              color: _status == AttendanceStatus.checkedIn
-                  ? Colors.green
-                  : const Color(0xFF1A237E),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _status == AttendanceStatus.checkedIn
-                  ? 'You are ON SITE'
-                  : 'You are CHECKED OUT',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: _status == AttendanceStatus.checkedIn
-                    ? Colors.green.shade700
-                    : const Color(0xFF424242),
+            // Large visual status indicator
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isCheckedIn
+                    ? Colors.green.withValues(alpha: 0.12)
+                    : Colors.grey.withValues(alpha: 0.1),
+              ),
+              child: Icon(
+                isCheckedIn ? Icons.check_circle : LucideIcons.logIn,
+                size: 48,
+                color: isCheckedIn ? Colors.green : const Color(0xFF1A237E),
               ),
             ),
-            if (_status == AttendanceStatus.checkedIn && _checkInTime != null) ...[
+            const SizedBox(height: 14),
+            Text(
+              isCheckedIn ? 'ON SITE' : 'CHECKED OUT',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: isCheckedIn ? Colors.green.shade700 : const Color(0xFF424242),
+              ),
+            ),
+            if (isCheckedIn && _checkInTime != null) ...[
               const SizedBox(height: 6),
               Text(
-                'Checked in at ${_formatTime(_checkInTime!)} — ${_elapsedSinceCheckIn()}',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                '${_formatTime(_checkInTime!)} — ${_elapsedSinceCheckIn()}',
+                style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
               ),
             ],
             const SizedBox(height: 20),
-            if (_status == AttendanceStatus.checkedOut) ...[
+            if (!isCheckedIn) ...[
               SizedBox(
                 width: double.infinity,
-                height: 52,
+                height: 56,
                 child: ElevatedButton.icon(
-                  icon: const Icon(LucideIcons.logIn, size: 20),
-                  label: const Text('MARK ATTENDANCE',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  icon: const Icon(LucideIcons.logIn, size: 22),
+                  label: const Text('CHECK IN',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1A237E),
                     foregroundColor: Colors.white,
@@ -378,7 +383,6 @@ class _AttendanceTabState extends State<AttendanceTab> {
                   onPressed: _canCheckIn ? _handleCheckIn : null,
                 ),
               ),
-              // Show why check-in is blocked
               if (!_canCheckIn && _geofenceResult != null) ...[
                 const SizedBox(height: 10),
                 _buildBlockedMessage(),
@@ -388,8 +392,8 @@ class _AttendanceTabState extends State<AttendanceTab> {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton.icon(
-                  icon: const Icon(LucideIcons.send, size: 20),
-                  label: const Text('SEND DAILY REPORT',
+                  icon: const Icon(LucideIcons.send, size: 22),
+                  label: const Text('SEND REPORT',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFFFCA28),

@@ -22,17 +22,41 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
 
   late TabController _tabController;
   String? _recordingForUserId;
+  Set<String> _onSiteUserIds = {};
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadOnSiteUsers();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  /// Fetch user IDs that have open attendance sessions (checked in, not out).
+  Future<void> _loadOnSiteUsers() async {
+    if (widget.accountId == null) return;
+    try {
+      final openSessions = await _supabase
+          .from('attendance')
+          .select('user_id')
+          .eq('account_id', widget.accountId!)
+          .isFilter('check_out_at', null);
+
+      if (mounted) {
+        setState(() {
+          _onSiteUserIds = Set<String>.from(
+            (openSessions as List).map((s) => s['user_id']?.toString() ?? ''),
+          );
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading on-site users: $e');
+    }
   }
 
   /// Get team members stream filtered by status.
@@ -484,6 +508,7 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
                       : null,
                   status: statusFilter,
                   isAdminUser: isAdmin,
+                  isOnSite: _onSiteUserIds.contains(user['id']?.toString()),
                   onDeactivate: () => _handleDeactivateUser(user),
                   onActivate: () => _handleActivateUser(user),
                   onRemove: () => _handleRemoveUser(user),

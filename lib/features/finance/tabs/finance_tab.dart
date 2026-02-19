@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+import 'package:houzzdat_app/features/finance/widgets/finance_overview_card.dart';
 import 'package:houzzdat_app/features/finance/widgets/site_finances_subtab.dart';
 import 'package:houzzdat_app/features/finance/widgets/owner_finances_subtab.dart';
 
@@ -38,6 +39,8 @@ class _FinanceTabState extends State<FinanceTab>
 
     return Column(
       children: [
+        // Finance overview summary
+        FinanceOverviewCard(accountId: widget.accountId!),
         // Sub-tab bar
         Container(
           color: Colors.white,
