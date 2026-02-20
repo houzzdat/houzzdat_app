@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/features/insights/models/material_state.dart';
 
@@ -37,10 +38,10 @@ class MaterialStateAgent {
     String accountId,
   ) async {
     final results = await Future.wait([
-      _fetchMaterialRequests(projectId, accountId),
-      _fetchMaterialSpecs(projectId, accountId),
-      _fetchBOQItems(projectId),
-      _fetchMaterialTransactions(projectId),
+      _safeFetch('materialRequests', () => _fetchMaterialRequests(projectId, accountId)),
+      _safeFetch('materialSpecs', () => _fetchMaterialSpecs(projectId, accountId)),
+      _safeFetch('boqItems', () => _fetchBOQItems(projectId)),
+      _safeFetch('transactions', () => _fetchMaterialTransactions(projectId)),
     ]);
 
     final requests = results[0] as List<Map<String, dynamic>>;
@@ -225,6 +226,22 @@ class MaterialStateAgent {
       actualSpend: actSpend,
       items: [],
     );
+  }
+
+  // ─── Safe Fetch Wrapper ────────────────────────────────────
+  /// Wraps a DB query so one failure doesn't crash all parallel fetches.
+  Future<List<Map<String, dynamic>>> _safeFetch(
+    String label,
+    Future<List<Map<String, dynamic>>> Function() fetcher,
+  ) async {
+    try {
+      final result = await fetcher();
+      debugPrint('MaterialStateAgent.$label: ${result.length} rows');
+      return result;
+    } catch (e) {
+      debugPrint('MaterialStateAgent.$label FAILED: $e');
+      return []; // Return empty instead of crashing Future.wait
+    }
   }
 
   // ─── Data Fetchers ──────────────────────────────────────────

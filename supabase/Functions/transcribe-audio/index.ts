@@ -119,6 +119,62 @@ function mapAiIntent(intent: string): string {
 }
 
 /**
+ * Maps AI-returned event types to the DB CHECK constraint values.
+ * Allowed: 'project_update', 'issue_reported', 'approval_request', 'instruction', 'information'
+ */
+function mapEventType(type: string): string {
+  const normalized = (type || '').toLowerCase().trim()
+    .replace(/[^a-z_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+
+  const mapping: Record<string, string> = {
+    // project_update variants
+    'project_update': 'project_update',
+    'update': 'project_update',
+    'status_update': 'project_update',
+    'progress_update': 'project_update',
+    'daily_update': 'project_update',
+    'report': 'project_update',
+    // issue_reported variants
+    'issue_reported': 'issue_reported',
+    'issue': 'issue_reported',
+    'problem': 'issue_reported',
+    'complaint': 'issue_reported',
+    'defect': 'issue_reported',
+    'safety': 'issue_reported',
+    // approval_request variants
+    'approval_request': 'approval_request',
+    'approval': 'approval_request',
+    'approval_needed': 'approval_request',
+    'permission': 'approval_request',
+    // instruction variants
+    'instruction': 'instruction',
+    'task': 'instruction',
+    'action_required': 'instruction',
+    'directive': 'instruction',
+    'request': 'instruction',
+    // information variants
+    'information': 'information',
+    'info': 'information',
+    'note': 'information',
+    'general': 'information',
+  };
+
+  const mapped = mapping[normalized];
+  if (mapped) return mapped;
+
+  // Fuzzy fallback
+  if (normalized.includes('update') || normalized.includes('progress') || normalized.includes('report')) return 'project_update';
+  if (normalized.includes('issue') || normalized.includes('problem') || normalized.includes('defect')) return 'issue_reported';
+  if (normalized.includes('approv') || normalized.includes('permission')) return 'approval_request';
+  if (normalized.includes('instruct') || normalized.includes('task') || normalized.includes('action')) return 'instruction';
+
+  console.warn(`mapEventType: UNRECOGNIZED type "${type}" → defaulting to 'information'`);
+  return 'information';
+}
+
+/**
  * Maps priority to DB CHECK constraint values
  */
 function mapAiPriority(priority: string): string {
@@ -1006,7 +1062,7 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         voice_note_id: voiceNoteId,
         project_id: voiceNote.project_id,
         account_id: voiceNote.account_id,
-        event_type: e.type || 'information',
+        event_type: mapEventType(e.type),
         title: e.title || ai.short_summary,
         description: e.description || ai.detailed_summary,
         requires_followup: e.requires_followup || false,
