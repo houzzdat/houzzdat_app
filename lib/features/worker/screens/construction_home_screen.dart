@@ -194,6 +194,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
 
       try {
         final audioBytes = await _recorderService.stopRecording();
+        debugPrint('[Recording] stopRecording returned ${audioBytes?.length ?? 0} bytes');
         if (audioBytes != null && _projectId != null) {
           final result = await _recorderService.uploadAudio(
             bytes: audioBytes,
@@ -201,9 +202,11 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
             userId: _userId!,
             accountId: _accountId!,
           );
+          debugPrint('[Recording] uploadAudio result: $result');
 
           if (mounted && result != null) {
             final voiceNoteId = result['id']!;
+            debugPrint('[Recording] quickTag=$_quickTagEnabled, showing overlay for $voiceNoteId');
 
             if (_quickTagEnabled) {
               QuickTagOverlay.show(
@@ -220,10 +223,14 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
 
             // Refresh My Logs tab if visible
             _myLogsKey.currentState?.refreshNotes();
+          } else {
+            debugPrint('[Recording] Skipped QuickTag: mounted=$mounted, result=$result');
           }
+        } else {
+          debugPrint('[Recording] Skipped upload: bytes=${audioBytes?.length}, projectId=$_projectId');
         }
       } catch (e) {
-        debugPrint('Recording error: $e');
+        debugPrint('[Recording] Error: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(

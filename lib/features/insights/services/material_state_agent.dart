@@ -59,8 +59,8 @@ class MaterialStateAgent {
     final items = <MaterialItem>[];
     for (final r in requests) {
       items.add(MaterialItem(
-        name: r['name']?.toString() ?? r['material_name']?.toString() ?? 'Unknown',
-        category: r['category']?.toString(),
+        name: r['material_name']?.toString() ?? 'Unknown',
+        category: r['material_category']?.toString(),
         status: 'requested',
         quantity: (r['quantity'] as num?)?.toDouble() ?? 0,
         unit: r['unit']?.toString() ?? '',
@@ -232,7 +232,7 @@ class MaterialStateAgent {
   Future<List<Map<String, dynamic>>> _fetchMaterialRequests(String projectId, String accountId) async {
     return await _supabase
         .from('voice_note_material_requests')
-        .select('name, material_name, category, quantity, unit, urgency')
+        .select('material_name, material_category, quantity, unit, urgency, confidence_score')
         .eq('project_id', projectId);
   }
 

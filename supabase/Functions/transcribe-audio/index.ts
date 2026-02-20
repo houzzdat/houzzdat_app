@@ -946,6 +946,8 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
     if (ai.materials && ai.materials.length > 0) {
       const materialInserts = ai.materials.map((m: any) => ({
         voice_note_id: voiceNoteId,
+        project_id: voiceNote.project_id,
+        account_id: voiceNote.account_id,
         material_category: m.category || 'General',
         material_name: m.name,
         quantity: m.quantity || null,
@@ -960,11 +962,14 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
       dbOperations.push(
         supabase.from("voice_note_material_requests").insert(materialInserts)
       );
+      console.log(`  → ${materialInserts.length} material request(s) queued`);
     }
 
     if (ai.labor && ai.labor.length > 0) {
       const laborInserts = ai.labor.map((l: any) => ({
         voice_note_id: voiceNoteId,
+        project_id: voiceNote.project_id,
+        account_id: voiceNote.account_id,
         labor_type: l.type || 'General Labor',
         headcount: l.headcount || 1,
         duration_days: l.duration_days || null,
@@ -981,6 +986,8 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
     if (ai.approvals && ai.approvals.length > 0) {
       const approvalInserts = ai.approvals.map((a: any) => ({
         voice_note_id: voiceNoteId,
+        project_id: voiceNote.project_id,
+        account_id: voiceNote.account_id,
         approval_type: a.type || 'General Approval',
         amount: a.amount || null,
         currency: a.currency || 'INR',
@@ -997,6 +1004,8 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
     if (ai.project_events && ai.project_events.length > 0) {
       const eventInserts = ai.project_events.map((e: any) => ({
         voice_note_id: voiceNoteId,
+        project_id: voiceNote.project_id,
+        account_id: voiceNote.account_id,
         event_type: e.type || 'information',
         title: e.title || ai.short_summary,
         description: e.description || ai.detailed_summary,

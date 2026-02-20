@@ -31,15 +31,21 @@ class QuickTagOverlay extends StatefulWidget {
       return;
     }
 
-    showModalBottomSheet(
-      context: context,
-      isDismissible: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => QuickTagOverlay(
-        voiceNoteId: voiceNoteId,
-        onDismissed: onDismissed,
-      ),
-    );
+    try {
+      showModalBottomSheet(
+        context: context,
+        isDismissible: true,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) => QuickTagOverlay(
+          voiceNoteId: voiceNoteId,
+          onDismissed: onDismissed,
+        ),
+      );
+    } catch (e) {
+      debugPrint('QuickTag showModalBottomSheet failed: $e');
+      onDismissed?.call();
+    }
   }
 
   @override
