@@ -16,7 +16,7 @@ class ReportsScreen extends StatefulWidget {
   State<ReportsScreen> createState() => _ReportsScreenState();
 }
 
-class _ReportsScreenState extends State<ReportsScreen> {
+class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProviderStateMixin {
   final _supabase = Supabase.instance.client;
 
   List<Map<String, dynamic>> _reports = [];
@@ -25,15 +25,19 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   RealtimeChannel? _reportsChannel;
 
+  late TabController _tabController;
+
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _loadReports();
     _subscribeRealtime();
   }
 
   @override
   void dispose() {
+    _tabController.dispose();
     _reportsChannel?.unsubscribe();
     super.dispose();
   }
@@ -146,6 +150,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
         backgroundColor: AppTheme.primaryIndigo,
         foregroundColor: Colors.white,
         elevation: 0,
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: AppTheme.accentAmber,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(text: 'Saved Reports'),
+            Tab(text: 'Daily Reports'),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.tune),
@@ -161,7 +175,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          // Saved Reports Tab
+          Column(
         children: [
           // Generate new report button
           Container(
@@ -262,6 +280,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
           ),
         ],
       ),
+          // Daily Reports Tab
+          _DailyReportsTab(accountId: widget.accountId),
+        ],
+      ),
     );
   }
 
@@ -290,5 +312,336 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
       ),
     );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Daily Reports Tab
+// ══════════════════════════════════════════════════════════════
+
+class _DailyReportsTab extends StatefulWidget {
+  final String accountId;
+
+  const _DailyReportsTab({required this.accountId});
+
+  @override
+  State<_DailyReportsTab> createState() => _DailyReportsTabState();
+}
+
+class _DailyReportsTabState extends State<_DailyReportsTab> {
+  final _supabase = Supabase.instance.client;
+
+  List<Map<String, dynamic>> _dailyReports = [];
+  Map<String, String> _userNames = {};
+  Map<String, String> _projectNames = {};
+  bool _isLoading = true;
+  String? _selectedProjectId;
+  DateTime _startDate = DateTime.now().subtract(const Duration(days: 7));
+  DateTime _endDate = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    await Future.wait([
+      _loadProjects(),
+      _loadDailyReports(),
+    ]);
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  Future<void> _loadProjects() async {
+    try {
+      final projects = await _supabase
+          .from('projects')
+          .select('id, name')
+          .eq('account_id', widget.accountId);
+
+      if (mounted) {
+        setState(() {
+          _projectNames = {
+            for (var p in projects)
+              p['id'].toString(): p['name']?.toString() ?? 'Site'
+          };
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading projects: $e');
+    }
+  }
+
+  Future<void> _loadDailyReports() async {
+    try {
+      final dayStart = DateTime(_startDate.year, _startDate.month, _startDate.day);
+      final dayEnd = DateTime(_endDate.year, _endDate.month, _endDate.day)
+          .add(const Duration(days: 1));
+
+      // Query attendance records
+      var query = _supabase
+          .from('attendance')
+          .select('report_voice_note_id, user_id, check_in_at, check_out_at, project_id, voice_notes!report_voice_note_id(*)')
+          .eq('account_id', widget.accountId)
+          .gte('check_out_at', dayStart.toIso8601String())
+          .lt('check_out_at', dayEnd.toIso8601String())
+          .not('report_voice_note_id', 'is', null);
+
+      if (_selectedProjectId != null) {
+        query = query.eq('project_id', _selectedProjectId!);
+      }
+
+      final data = await query.order('check_out_at', ascending: false);
+
+      final reports = (data as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+
+      // Get unique user IDs
+      final userIds = reports
+          .map((r) => r['user_id']?.toString())
+          .where((id) => id != null && id.isNotEmpty)
+          .toSet();
+
+      // Fetch user names
+      final newNames = Map<String, String>.from(_userNames);
+      for (final uid in userIds) {
+        if (uid != null && !newNames.containsKey(uid)) {
+          try {
+            final user = await _supabase
+                .from('users')
+                .select('full_name, email')
+                .eq('id', uid)
+                .maybeSingle();
+            if (user != null) {
+              newNames[uid] =
+                  user['full_name']?.toString() ?? user['email']?.toString() ?? 'User';
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _dailyReports = reports;
+          _userNames = newNames;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading daily reports: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Filters
+        Container(
+          padding: const EdgeInsets.all(AppTheme.spacingM),
+          color: Colors.white,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Project filter
+              DropdownButtonFormField<String>(
+                value: _selectedProjectId,
+                decoration: const InputDecoration(
+                  labelText: 'Filter by Project',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('All Projects')),
+                  ..._projectNames.entries.map((e) =>
+                      DropdownMenuItem(value: e.key, child: Text(e.value))),
+                ],
+                onChanged: (value) {
+                  setState(() => _selectedProjectId = value);
+                  _loadDailyReports();
+                },
+              ),
+              const SizedBox(height: 12),
+              // Date range
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _startDate,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now(),
+                        );
+                        if (picked != null) {
+                          setState(() => _startDate = picked);
+                          _loadDailyReports();
+                        }
+                      },
+                      icon: const Icon(Icons.calendar_today, size: 16),
+                      label: Text(_formatDate(_startDate)),
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text('to'),
+                  ),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _endDate,
+                          firstDate: _startDate,
+                          lastDate: DateTime.now(),
+                        );
+                        if (picked != null) {
+                          setState(() => _endDate = picked);
+                          _loadDailyReports();
+                        }
+                      },
+                      icon: const Icon(Icons.calendar_today, size: 16),
+                      label: Text(_formatDate(_endDate)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        // Reports list
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _dailyReports.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.description_outlined,
+                            size: 64,
+                            color: Colors.grey.shade400,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No daily reports',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No reports found for the selected filters',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(AppTheme.spacingM),
+                      itemCount: _dailyReports.length,
+                      itemBuilder: (context, i) {
+                        final report = _dailyReports[i];
+                        final voiceNote = report['voice_notes'];
+                        final userName = _userNames[report['user_id']?.toString()] ?? 'Unknown';
+                        final projectName = _projectNames[report['project_id']?.toString()] ?? 'Unknown Site';
+                        final checkOut = DateTime.parse(report['check_out_at']);
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: ListTile(
+                            leading: const CircleAvatar(
+                              backgroundColor: Color(0xFFE8EAF6),
+                              child: Icon(Icons.description, color: Color(0xFF1A237E)),
+                            ),
+                            title: Text(
+                              userName,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(projectName),
+                                Text(
+                                  _formatDate(checkOut),
+                                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                ),
+                                if (voiceNote != null && voiceNote['transcript_final'] != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    voiceNote['transcript_final'].toString(),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            isThreeLine: true,
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () {
+                              // Navigate to report detail or show dialog
+                              _showReportDetail(report);
+                            },
+                          ),
+                        );
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
+
+  void _showReportDetail(Map<String, dynamic> report) {
+    final voiceNote = report['voice_notes'];
+    final userName = _userNames[report['user_id']?.toString()] ?? 'Unknown';
+    final projectName = _projectNames[report['project_id']?.toString()] ?? 'Unknown Site';
+    final checkOut = DateTime.parse(report['check_out_at']);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Daily Report - $userName'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Project: $projectName', style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text('Date: ${_formatDate(checkOut)}'),
+              const SizedBox(height: 16),
+              if (voiceNote != null) ...[
+                if (voiceNote['transcript_final'] != null || voiceNote['transcription'] != null)
+                  Text(
+                    voiceNote['transcript_final']?.toString() ??
+                        voiceNote['transcription']?.toString() ??
+                        'No transcript available',
+                  ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
   }
 }

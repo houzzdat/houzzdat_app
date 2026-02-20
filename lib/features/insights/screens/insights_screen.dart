@@ -13,8 +13,10 @@ import 'package:houzzdat_app/features/insights/screens/plan_setup_screen.dart';
 import 'package:houzzdat_app/features/insights/widgets/project_health_detail.dart';
 import 'package:houzzdat_app/features/insights/widgets/financial_position_detail.dart';
 import 'package:houzzdat_app/features/insights/widgets/material_pipeline_detail.dart';
+import 'package:houzzdat_app/features/insights/widgets/review_tab_content.dart';
+import 'package:houzzdat_app/features/insights/services/review_queue_service.dart';
 
-/// Main Insights screen with 3 tabs: Project Health, Finances, Materials.
+/// Main Insights screen with 4 tabs: Project Health, Finances, Materials, Review.
 class InsightsScreen extends StatefulWidget {
   final String accountId;
 
@@ -40,14 +42,17 @@ class _InsightsScreenState extends State<InsightsScreen>
   bool _loadingFinances = true;
   bool _loadingMaterials = true;
 
+  int _reviewBadgeCount = 0;
+
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(_onTabChanged);
     _loadProjectData();
+    _loadReviewBadgeCount();
   }
 
   @override
@@ -69,7 +74,17 @@ class _InsightsScreenState extends State<InsightsScreen>
         case 2:
           if (_materialPipelines == null) _loadMaterialData();
           break;
+        // case 3 (Review) is handled by its own stateful widget
       }
+    }
+  }
+
+  Future<void> _loadReviewBadgeCount() async {
+    try {
+      final count = await ReviewQueueService().getUnreviewedCount(widget.accountId);
+      if (mounted) setState(() => _reviewBadgeCount = count);
+    } catch (e) {
+      debugPrint('Error loading review badge count: $e');
     }
   }
 
@@ -117,6 +132,9 @@ class _InsightsScreenState extends State<InsightsScreen>
       case 2:
         await _loadMaterialData();
         break;
+      case 3:
+        await _loadReviewBadgeCount();
+        break;
     }
   }
 
@@ -143,15 +161,43 @@ class _InsightsScreenState extends State<InsightsScreen>
         elevation: 0,
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
           indicatorColor: AppTheme.accentAmber,
           indicatorWeight: 3,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white60,
           labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-          tabs: const [
-            Tab(text: 'PROJECT HEALTH'),
-            Tab(text: 'FINANCES'),
-            Tab(text: 'MATERIALS'),
+          tabAlignment: TabAlignment.start,
+          tabs: [
+            const Tab(text: 'PROJECT HEALTH'),
+            const Tab(text: 'FINANCES'),
+            const Tab(text: 'MATERIALS'),
+            Tab(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('REVIEW'),
+                  if (_reviewBadgeCount > 0) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: AppTheme.accentAmber,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        _reviewBadgeCount > 99 ? '99+' : '$_reviewBadgeCount',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -161,6 +207,10 @@ class _InsightsScreenState extends State<InsightsScreen>
           _buildProjectHealthTab(),
           _buildFinancesTab(),
           _buildMaterialsTab(),
+          ReviewTabContent(
+            accountId: widget.accountId,
+            onCountChanged: _loadReviewBadgeCount,
+          ),
         ],
       ),
     );

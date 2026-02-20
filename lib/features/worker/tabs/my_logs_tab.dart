@@ -128,6 +128,18 @@ class MyLogsTabState extends State<MyLogsTab> {
     });
 
     try {
+      // 0. Fetch daily report IDs for this worker
+      final dailyReportAttendance = await _supabase
+          .from('attendance')
+          .select('report_voice_note_id')
+          .eq('user_id', widget.userId)
+          .not('report_voice_note_id', 'is', null);
+
+      final dailyReportIds = dailyReportAttendance
+          .map((a) => a['report_voice_note_id']?.toString())
+          .where((id) => id != null)
+          .toSet();
+
       // 1. Fetch voice notes for this worker (top-level only)
       //    Filter by both user_id AND account_id for multi-company correctness
       final notes = await _supabase
@@ -138,7 +150,13 @@ class MyLogsTabState extends State<MyLogsTab> {
           .isFilter('parent_id', null)
           .order('created_at', ascending: false);
 
-      final notesList = List<Map<String, dynamic>>.from(notes);
+      // Filter out daily reports
+      final notesList = List<Map<String, dynamic>>.from(notes)
+          .where((note) {
+            final noteId = note['id']?.toString();
+            return noteId == null || !dailyReportIds.contains(noteId);
+          })
+          .toList();
 
       if (notesList.isEmpty) {
         if (mounted) {

@@ -706,12 +706,37 @@ class _DailyReportsTabState extends State<_DailyReportsTab> {
               _endDate.year, _endDate.month, _endDate.day)
           .add(const Duration(days: 1));
 
+      // Step 1: Query attendance records for this project within date range
+      final attendanceRecords = await _supabase
+          .from('attendance')
+          .select('report_voice_note_id, user_id, check_in_at, check_out_at')
+          .eq('project_id', widget.projectId)
+          .gte('check_out_at', dayStart.toIso8601String())
+          .lt('check_out_at', dayEnd.toIso8601String())
+          .not('report_voice_note_id', 'is', null);
+
+      // Step 2: Extract voice note IDs
+      final reportVoiceNoteIds = attendanceRecords
+          .map((a) => a['report_voice_note_id']?.toString())
+          .where((id) => id != null)
+          .toList();
+
+      if (reportVoiceNoteIds.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _voiceNotes = [];
+            _isLoading = false;
+            _error = null;
+          });
+        }
+        return;
+      }
+
+      // Step 3: Fetch voice notes for these IDs
       final data = await _supabase
           .from('voice_notes')
           .select()
-          .eq('project_id', widget.projectId)
-          .gte('created_at', dayStart.toIso8601String())
-          .lt('created_at', dayEnd.toIso8601String())
+          .inFilter('id', reportVoiceNoteIds)
           .order('created_at', ascending: false);
 
       final notes = (data as List)

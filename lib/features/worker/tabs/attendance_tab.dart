@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'package:houzzdat_app/core/services/geofence_service.dart';
+import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_audio_player.dart';
 
 enum AttendanceStatus { checkedOut, checkedIn }
 enum ReportType { voice, text }
@@ -35,6 +36,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
   String? _activeAttendanceId;
   DateTime? _checkInTime;
   List<Map<String, dynamic>> _history = [];
+  List<Map<String, dynamic>> _dailyReports = [];
   bool _isLoading = true;
 
   // Geofence state
@@ -60,6 +62,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
     await Future.wait([
       _loadGeofenceConfig(),
       _loadAttendance(),
+      _loadDailyReports(),
     ]);
     if (mounted) setState(() => _isLoading = false);
     // After config is loaded, auto-check location
@@ -147,6 +150,29 @@ class _AttendanceTabState extends State<AttendanceTab> {
       }
     } catch (e) {
       debugPrint('Error loading attendance: $e');
+    }
+  }
+
+  Future<void> _loadDailyReports() async {
+    try {
+      // Fetch recent daily reports with voice note details
+      final reports = await _supabase
+          .from('attendance')
+          .select('id, check_in_at, check_out_at, report_type, report_text, voice_notes!report_voice_note_id(*)')
+          .eq('user_id', widget.userId)
+          .not('report_type', 'is', null)
+          .order('check_out_at', ascending: false)
+          .limit(10);
+
+      if (mounted) {
+        setState(() {
+          _dailyReports = (reports as List)
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading daily reports: $e');
     }
   }
 
@@ -303,6 +329,18 @@ class _AttendanceTabState extends State<AttendanceTab> {
           const SizedBox(height: 16),
           _buildLocationStatusCard(),
           const SizedBox(height: 24),
+          if (_dailyReports.isNotEmpty) ...[
+            Text('MY DAILY REPORTS',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade500,
+                letterSpacing: 1,
+              )),
+            const SizedBox(height: 12),
+            ..._dailyReports.map((report) => _buildDailyReportCard(report)),
+            const SizedBox(height: 24),
+          ],
           if (_history.isNotEmpty) ...[
             Text('HISTORY',
               style: TextStyle(
@@ -703,6 +741,120 @@ class _AttendanceTabState extends State<AttendanceTab> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildDailyReportCard(Map<String, dynamic> report) {
+    final reportType = report['report_type'];
+    final isVoice = reportType == 'voice';
+    final checkOut = DateTime.parse(report['check_out_at']);
+    final voiceNote = report['voice_notes'];
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ExpansionTile(
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: isVoice
+                ? const Color(0xFFE8EAF6)
+                : const Color(0xFFFFF8E1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            isVoice ? LucideIcons.volume2 : LucideIcons.edit3,
+            size: 20,
+            color: isVoice
+                ? const Color(0xFF1A237E)
+                : const Color(0xFFFFCA28),
+          ),
+        ),
+        title: Text(
+          _formatDate(checkOut),
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+        ),
+        subtitle: Text(
+          'Submitted at ${_formatTime(checkOut)}',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Voice report: show audio player
+                if (isVoice && voiceNote != null) ...[
+                  if (voiceNote['audio_url'] != null)
+                    VoiceNoteAudioPlayer(
+                      audioUrl: voiceNote['audio_url'].toString(),
+                    ),
+                  const SizedBox(height: 16),
+
+                  // Transcript
+                  if (voiceNote['transcript_final'] != null ||
+                      voiceNote['transcription'] != null) ...[
+                    Text('TRANSCRIPT',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade600,
+                        letterSpacing: 0.5,
+                      )),
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8EAF6),
+                        borderRadius: BorderRadius.circular(8),
+                        border: const Border(
+                          left: BorderSide(color: Color(0xFF1A237E), width: 3),
+                        ),
+                      ),
+                      child: Text(
+                        voiceNote['transcript_final']?.toString() ??
+                            voiceNote['transcription']?.toString() ??
+                            'Processing...',
+                        style: const TextStyle(fontSize: 14, height: 1.5),
+                      ),
+                    ),
+                  ],
+                ],
+
+                // Text report: show text content
+                if (!isVoice && report['report_text'] != null) ...[
+                  Text('REPORT CONTENT',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade600,
+                      letterSpacing: 0.5,
+                    )),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF8E1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: const Border(
+                        left: BorderSide(color: Color(0xFFFFCA28), width: 3),
+                      ),
+                    ),
+                    child: Text(
+                      report['report_text'].toString(),
+                      style: const TextStyle(fontSize: 14, height: 1.5),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

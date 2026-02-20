@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
@@ -91,7 +92,7 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
     try {
       final users = await _supabase
           .from('users')
-          .select('id, email, full_name, phone_number, current_project_id, geofence_exempt')
+          .select('id, email, full_name, phone_number, current_project_id, geofence_exempt, quick_tag_enabled')
           .inFilter('id', userIds);
 
       // Create a map for quick lookup
@@ -191,6 +192,38 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
           );
         }
       }
+    }
+  }
+
+  Future<void> _handleSendTextMessage(Map<String, dynamic> user) async {
+    final phoneNumber = user['phone_number']?.toString();
+
+    if (phoneNumber == null || phoneNumber.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'No phone number available for ${user['full_name'] ?? user['email']}',
+            ),
+            backgroundColor: AppTheme.warningOrange,
+          ),
+        );
+      }
+      return;
+    }
+
+    final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
+    final smsUri = Uri(scheme: 'sms', path: cleanNumber);
+
+    if (await canLaunchUrl(smsUri)) {
+      await launchUrl(smsUri);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open messaging app'),
+          backgroundColor: AppTheme.errorRed,
+        ),
+      );
     }
   }
 
@@ -328,6 +361,37 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
             ),
           );
         }
+      }
+    }
+  }
+
+  Future<void> _handleToggleQuickTag(Map<String, dynamic> user, bool enabled) async {
+    try {
+      await _supabase
+          .from('users')
+          .update({'quick_tag_enabled': enabled})
+          .eq('id', user['id']);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Quick-Tag ${enabled ? 'enabled' : 'disabled'} for ${user['full_name'] ?? user['email']}',
+            ),
+            backgroundColor: AppTheme.successGreen,
+          ),
+        );
+        setState(() {}); // Refresh the list
+      }
+    } catch (e) {
+      debugPrint('Error toggling quick-tag: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not update quick-tag setting'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
       }
     }
   }
@@ -506,12 +570,17 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
                   onSendVoiceNote: statusFilter == 'active'
                       ? () => _handleSendVoiceNote(user)
                       : null,
+                  onSendTextMessage: statusFilter == 'active'
+                      ? () => _handleSendTextMessage(user)
+                      : null,
                   status: statusFilter,
                   isAdminUser: isAdmin,
                   isOnSite: _onSiteUserIds.contains(user['id']?.toString()),
                   onDeactivate: () => _handleDeactivateUser(user),
                   onActivate: () => _handleActivateUser(user),
                   onRemove: () => _handleRemoveUser(user),
+                  quickTagEnabled: user['quick_tag_enabled'] as bool?,
+                  onQuickTagToggle: (enabled) => _handleToggleQuickTag(user, enabled),
                 );
               },
             );
@@ -523,14 +592,19 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
 
   /// Groups users by role and inserts header items.
   List<Map<String, dynamic>> _groupByRole(List<Map<String, dynamic>> users) {
-    // Sort by role
     users.sort((a, b) {
       final roleA = (a['role'] ?? 'worker').toString().toLowerCase();
       final roleB = (b['role'] ?? 'worker').toString().toLowerCase();
-      // Priority order: admin > manager > owner > worker > others
-      const roleOrder = {'admin': 0, 'manager': 1, 'owner': 2, 'worker': 3};
-      final orderA = roleOrder[roleA] ?? 4;
-      final orderB = roleOrder[roleB] ?? 4;
+      const roleOrder = {
+        'admin': 0,
+        'manager': 1,
+        'owner': 2,
+        'supervisor': 3,
+        'site_engineer': 4,
+        'worker': 5,
+      };
+      final orderA = roleOrder[roleA] ?? 6;
+      final orderB = roleOrder[roleB] ?? 6;
       return orderA.compareTo(orderB);
     });
 
@@ -543,12 +617,31 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
         currentRole = role;
         result.add({
           '_isHeader': true,
-          '_role': role,
+          '_role': _getRoleGroupDisplayName(role),
         });
       }
       result.add(user);
     }
 
     return result;
+  }
+
+  String _getRoleGroupDisplayName(String role) {
+    switch (role.toLowerCase()) {
+      case 'admin':
+        return 'Admins';
+      case 'manager':
+        return 'Managers';
+      case 'owner':
+        return 'Owners';
+      case 'supervisor':
+        return 'Supervisors';
+      case 'site_engineer':
+        return 'Engineers';
+      case 'worker':
+        return 'Workers';
+      default:
+        return role;
+    }
   }
 }

@@ -133,12 +133,13 @@ class AudioRecorderService {
     return path != null ? await File(path).readAsBytes() : null;
   }
 
-  /// Upload audio and create voice note record
-  /// Transcription will be triggered automatically via database trigger
-  Future<String?> uploadAudio({
-    required Uint8List bytes, 
-    required String projectId, 
-    required String userId, 
+  /// Upload audio and create voice note record.
+  /// Returns {id, url} on success, or null on failure.
+  /// Transcription will be triggered automatically via database trigger.
+  Future<Map<String, String>?> uploadAudio({
+    required Uint8List bytes,
+    required String projectId,
+    required String userId,
     required String accountId,
     String? parentId,
     String? recipientId,
@@ -154,32 +155,33 @@ class AudioRecorderService {
       await _supabase.storage.from('voice-notes').uploadBinary(
         path, bytes, fileOptions: FileOptions(contentType: contentType, upsert: true)
       );
-      
+
       final String url = _supabase.storage.from('voice-notes').getPublicUrl(path);
-      
+
       // Create voice note record with status 'processing'
       // The database trigger will automatically call the edge function
       // DO NOT manually call the edge function - it causes duplicate processing
       final res = await _supabase.from('voice_notes').insert({
-        'user_id': userId, 
-        'project_id': projectId, 
-        'account_id': accountId, 
-        'audio_url': url, 
-        'parent_id': parentId, 
-        'recipient_id': recipientId, 
+        'user_id': userId,
+        'project_id': projectId,
+        'account_id': accountId,
+        'audio_url': url,
+        'parent_id': parentId,
+        'recipient_id': recipientId,
         'status': 'processing'  // ✅ Correct - let edge function handle rest
       }).select().single();
-      
-      debugPrint("✅ Voice note created: ${res['id']}");
+
+      final voiceNoteId = res['id']?.toString() ?? '';
+      debugPrint("✅ Voice note created: $voiceNoteId");
       debugPrint("   Database trigger will handle transcription automatically");
-      
+
       // REMOVED: Manual edge function call
       // The database trigger 'transcribe_on_insert' handles this
-      
-      return url;
-    } catch (e) { 
+
+      return {'id': voiceNoteId, 'url': url};
+    } catch (e) {
       debugPrint("Upload Error: $e");
-      return null; 
+      return null;
     }
   }
 }

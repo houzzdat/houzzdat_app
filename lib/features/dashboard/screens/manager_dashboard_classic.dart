@@ -17,6 +17,8 @@ import 'package:houzzdat_app/features/dashboard/widgets/broadcast_voice_dialog.d
 import 'package:houzzdat_app/features/reports/screens/reports_screen.dart';
 import 'package:houzzdat_app/features/insights/screens/insights_screen.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/confidence_calibration_widget.dart';
+import 'package:houzzdat_app/features/voice_notes/widgets/quick_tag_overlay.dart';
+import 'package:houzzdat_app/features/insights/services/review_queue_service.dart';
 
 class ManagerDashboardClassic extends StatefulWidget {
   const ManagerDashboardClassic({super.key});
@@ -24,7 +26,8 @@ class ManagerDashboardClassic extends StatefulWidget {
   State<ManagerDashboardClassic> createState() => _ManagerDashboardClassicState();
 }
 
-class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
+class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
+    with SingleTickerProviderStateMixin {
   final _supabase = Supabase.instance.client;
   final _recorderService = AudioRecorderService();
   final _companyService = CompanyContextService();
@@ -32,16 +35,33 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
   String? _accountId;
   int _currentIndex = 0;
   bool _isRecording = false;
+  bool _isUploading = false;
+  bool _quickTagEnabled = true;
+  int _reviewBadgeCount = 0;
+
+  // Pulsing animation for FAB
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
     _initializeManager();
     _companyService.addListener(_onCompanyChanged);
+
+    // Initialize pulsing animation
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.08).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
   }
 
   @override
   void dispose() {
+    _pulseController.dispose();
     _companyService.removeListener(_onCompanyChanged);
     super.dispose();
   }
@@ -59,6 +79,8 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
       if (mounted) {
         setState(() => _accountId = companyService.activeAccountId);
       }
+      _loadQuickTagSetting();
+      _loadReviewBadgeCount();
       return;
     }
 
@@ -67,6 +89,45 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
     if (user != null) {
       final data = await _supabase.from('users').select('account_id').eq('id', user.id).single();
       if (mounted) setState(() => _accountId = data['account_id']?.toString());
+      _loadQuickTagSetting();
+      _loadReviewBadgeCount();
+    }
+  }
+
+  Future<void> _loadQuickTagSetting() async {
+    try {
+      final user = _supabase.auth.currentUser;
+      if (user == null || _accountId == null) return;
+
+      final userData = await _supabase
+          .from('users')
+          .select('quick_tag_enabled')
+          .eq('id', user.id)
+          .single();
+
+      final accountData = await _supabase
+          .from('accounts')
+          .select('quick_tag_default')
+          .eq('id', _accountId!)
+          .single();
+
+      final enabled = userData['quick_tag_enabled']
+          ?? accountData['quick_tag_default']
+          ?? true;
+
+      if (mounted) setState(() => _quickTagEnabled = enabled as bool);
+    } catch (e) {
+      debugPrint('Error loading quick-tag setting: $e');
+    }
+  }
+
+  Future<void> _loadReviewBadgeCount() async {
+    if (_accountId == null) return;
+    try {
+      final count = await ReviewQueueService().getUnreviewedCount(_accountId!);
+      if (mounted) setState(() => _reviewBadgeCount = count);
+    } catch (e) {
+      debugPrint('Error loading review badge count: $e');
     }
   }
 
@@ -189,20 +250,37 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
             final projectId = userData['current_project_id']?.toString();
 
             if (projectId != null) {
-              await _recorderService.uploadAudio(
+              final result = await _recorderService.uploadAudio(
                 bytes: bytes,
                 projectId: projectId,
                 userId: user.id,
                 accountId: _accountId!,
               );
 
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Voice note submitted'),
-                    backgroundColor: AppTheme.successGreen,
-                  ),
-                );
+              if (mounted && result != null) {
+                final voiceNoteId = result['id']!;
+
+                void showSuccessSnackbar() {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Voice note submitted'),
+                        backgroundColor: AppTheme.successGreen,
+                      ),
+                    );
+                  }
+                }
+
+                if (_quickTagEnabled) {
+                  QuickTagOverlay.show(
+                    context,
+                    voiceNoteId: voiceNoteId,
+                    quickTagEnabled: true,
+                    onDismissed: showSuccessSnackbar,
+                  );
+                } else {
+                  showSuccessSnackbar();
+                }
               }
             }
           } catch (e) {
@@ -329,13 +407,20 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.insights),
+            icon: Badge(
+              isLabelVisible: _reviewBadgeCount > 0,
+              label: Text(
+                _reviewBadgeCount > 99 ? '99+' : '$_reviewBadgeCount',
+                style: const TextStyle(fontSize: 10),
+              ),
+              child: const Icon(Icons.insights),
+            ),
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (context) => InsightsScreen(accountId: accountId),
                 ),
-              );
+              ).then((_) => _loadReviewBadgeCount());
             },
             tooltip: 'Insights',
           ),
@@ -384,6 +469,55 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
           ),
         ],
       ),
+      // Persistent recording FAB — visible on ALL tabs
+      floatingActionButton: AnimatedBuilder(
+        animation: _pulseAnimation,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: _isRecording ? 1.0 : _pulseAnimation.value,
+            child: GestureDetector(
+              onTap: _isUploading ? null : _handleCentralMicTap,
+              onLongPress: _isUploading ? null : _handleCentralMicLongPress,
+              child: SizedBox(
+                width: 72,
+                height: 72,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _isRecording
+                        ? Colors.red
+                        : _isUploading
+                            ? Colors.grey
+                            : const Color(0xFFFFCA28),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.2),
+                        blurRadius: 12,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: _isUploading
+                      ? const Center(
+                          child: SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                                color: Colors.black, strokeWidth: 3),
+                          ),
+                        )
+                      : Icon(
+                          _isRecording ? Icons.stop_rounded : Icons.mic_rounded,
+                          size: 32,
+                          color: Colors.black,
+                        ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: CustomBottomNav(
         currentIndex: _currentIndex,
         onTabSelected: (index) {
@@ -391,9 +525,6 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic> {
             setState(() => _currentIndex = index);
           }
         },
-        onCentralMicTap: _handleCentralMicTap,
-        onCentralMicLongPress: _handleCentralMicLongPress,
-        isRecording: _isRecording,
       ),
     );
   }

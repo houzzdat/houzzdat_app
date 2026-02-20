@@ -8,9 +8,11 @@ import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/worker/tabs/my_logs_tab.dart';
 import 'package:houzzdat_app/features/worker/tabs/daily_tasks_tab.dart';
 import 'package:houzzdat_app/features/worker/tabs/attendance_tab.dart';
+import 'package:houzzdat_app/features/worker/tabs/progress_tab.dart';
+import 'package:houzzdat_app/features/voice_notes/widgets/quick_tag_overlay.dart';
 
 /// Worker Home Screen with persistent recording FAB visible on all tabs.
-/// 3-tab BottomNavigationBar: My Logs, Tasks, Attendance.
+/// 4-tab BottomNavigationBar: My Logs, Tasks, Attendance, Progress.
 /// Large 72px yellow FAB for voice recording on every screen.
 class ConstructionHomeScreen extends StatefulWidget {
   const ConstructionHomeScreen({super.key});
@@ -33,6 +35,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
   // Recording state
   bool _isRecording = false;
   bool _isUploading = false;
+  bool _quickTagEnabled = true;
 
   // Pulsing animation for FAB
   late AnimationController _pulseController;
@@ -89,7 +92,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
         if (user != null) {
           final userData = await _supabase
               .from('users')
-              .select('current_project_id')
+              .select('current_project_id, quick_tag_enabled')
               .eq('id', user.id)
               .single();
           if (mounted) {
@@ -100,6 +103,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
               _isInitializing = false;
             });
           }
+          _resolveQuickTagSetting(userData['quick_tag_enabled']);
           return;
         }
       }
@@ -109,7 +113,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
       if (user != null) {
         final userData = await _supabase
             .from('users')
-            .select('account_id, current_project_id')
+            .select('account_id, current_project_id, quick_tag_enabled')
             .eq('id', user.id)
             .single();
         if (mounted) {
@@ -120,9 +124,31 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
             _isInitializing = false;
           });
         }
+        _resolveQuickTagSetting(userData['quick_tag_enabled']);
       }
     } catch (e) {
       if (mounted) setState(() => _isInitializing = false);
+    }
+  }
+
+  Future<void> _resolveQuickTagSetting(dynamic userSetting) async {
+    if (userSetting != null) {
+      if (mounted) setState(() => _quickTagEnabled = userSetting as bool);
+      return;
+    }
+    // Fall back to account-level default
+    try {
+      if (_accountId != null) {
+        final accountData = await _supabase
+            .from('accounts')
+            .select('quick_tag_default')
+            .eq('id', _accountId!)
+            .single();
+        final defaultVal = accountData['quick_tag_default'] ?? true;
+        if (mounted) setState(() => _quickTagEnabled = defaultVal as bool);
+      }
+    } catch (e) {
+      debugPrint('Error resolving quick-tag default: $e');
     }
   }
 
@@ -169,16 +195,29 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
       try {
         final audioBytes = await _recorderService.stopRecording();
         if (audioBytes != null && _projectId != null) {
-          await _recorderService.uploadAudio(
+          final result = await _recorderService.uploadAudio(
             bytes: audioBytes,
             projectId: _projectId!,
             userId: _userId!,
             accountId: _accountId!,
           );
 
-          if (mounted) {
-            // Show success feedback
-            _showSuccessOverlay();
+          if (mounted && result != null) {
+            final voiceNoteId = result['id']!;
+
+            if (_quickTagEnabled) {
+              QuickTagOverlay.show(
+                context,
+                voiceNoteId: voiceNoteId,
+                quickTagEnabled: true,
+                onDismissed: () {
+                  if (mounted) _showSuccessOverlay();
+                },
+              );
+            } else {
+              _showSuccessOverlay();
+            }
+
             // Refresh My Logs tab if visible
             _myLogsKey.currentState?.refreshNotes();
           }
@@ -242,6 +281,40 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
     });
   }
 
+  Widget _buildNavItem({
+    required IconData icon,
+    required String label,
+    required int index,
+  }) {
+    final isActive = _currentIndex == index;
+    return InkWell(
+      onTap: () => setState(() => _currentIndex = index),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 24,
+              color: isActive ? const Color(0xFF1A237E) : Colors.grey.shade400,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: isActive ? 12 : 11,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                color: isActive ? const Color(0xFF1A237E) : Colors.grey.shade400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isInitializing || _accountId == null) {
@@ -257,9 +330,10 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
       MyLogsTab(key: _myLogsKey, accountId: _accountId!, userId: _userId!, projectId: _projectId),
       DailyTasksTab(accountId: _accountId!, userId: _userId!),
       AttendanceTab(accountId: _accountId!, userId: _userId!, projectId: _projectId),
+      ProgressTab(accountId: _accountId!, userId: _userId!, projectId: _projectId),
     ];
 
-    final titles = ['MY LOGS', 'DAILY TASKS', 'ATTENDANCE'];
+    final titles = ['MY LOGS', 'DAILY TASKS', 'ATTENDANCE', 'PROGRESS'];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -373,50 +447,41 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
           );
         },
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
 
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) => setState(() => _currentIndex = index),
-          backgroundColor: Colors.white,
-          selectedItemColor: const Color(0xFF1A237E),
-          unselectedItemColor: Colors.grey.shade400,
-          selectedLabelStyle: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
+      bottomNavigationBar: BottomAppBar(
+        color: Colors.white,
+        elevation: 8,
+        shape: const CircularNotchedRectangle(),
+        notchMargin: 8.0,
+        child: SizedBox(
+          height: 65,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNavItem(
+                icon: LucideIcons.fileAudio,
+                label: 'My Logs',
+                index: 0,
+              ),
+              _buildNavItem(
+                icon: LucideIcons.clipboardList,
+                label: 'Tasks',
+                index: 1,
+              ),
+              const SizedBox(width: 80), // Space for FAB
+              _buildNavItem(
+                icon: LucideIcons.userCheck,
+                label: 'Attendance',
+                index: 2,
+              ),
+              _buildNavItem(
+                icon: LucideIcons.barChart2,
+                label: 'Progress',
+                index: 3,
+              ),
+            ],
           ),
-          unselectedLabelStyle: const TextStyle(fontSize: 11),
-          type: BottomNavigationBarType.fixed,
-          elevation: 0,
-          iconSize: 28,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(LucideIcons.fileAudio),
-              activeIcon: Icon(LucideIcons.fileAudio),
-              label: 'My Logs',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(LucideIcons.clipboardList),
-              activeIcon: Icon(LucideIcons.clipboardList),
-              label: 'Tasks',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(LucideIcons.userCheck),
-              activeIcon: Icon(LucideIcons.userCheck),
-              label: 'Attendance',
-            ),
-          ],
         ),
       ),
     );

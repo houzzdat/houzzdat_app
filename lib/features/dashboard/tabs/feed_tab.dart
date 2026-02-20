@@ -36,10 +36,14 @@ class _FeedTabState extends State<FeedTab> {
   Map<String, String> _projectNames = {};
   Map<String, String> _userEmails = {};
 
+  // Daily report IDs to exclude from feed
+  List<String> _dailyReportIds = [];
+
   @override
   void initState() {
     super.initState();
     _loadLookups();
+    _refreshDailyReportIds();
   }
 
   Future<void> _loadLookups() async {
@@ -63,6 +67,27 @@ class _FeedTabState extends State<FeedTab> {
     } catch (e) {
       debugPrint('Error loading lookups: $e');
       if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _refreshDailyReportIds() async {
+    if (widget.accountId == null) return;
+    try {
+      final attendance = await _supabase
+          .from('attendance')
+          .select('report_voice_note_id')
+          .eq('account_id', widget.accountId!)
+          .not('report_voice_note_id', 'is', null);
+
+      final ids = attendance
+          .map((a) => a['report_voice_note_id']?.toString())
+          .where((id) => id != null)
+          .cast<String>()
+          .toList();
+
+      if (mounted) setState(() => _dailyReportIds = ids);
+    } catch (e) {
+      debugPrint('Error loading daily report IDs: $e');
     }
   }
 
@@ -96,6 +121,12 @@ class _FeedTabState extends State<FeedTab> {
         if (!transcript.contains(query) && !userEmail.contains(query) && !projectName.contains(query)) {
           return false;
         }
+      }
+
+      // Exclude daily reports from feed
+      final noteId = n['id']?.toString();
+      if (noteId != null && _dailyReportIds.contains(noteId)) {
+        return false;
       }
 
       return true;

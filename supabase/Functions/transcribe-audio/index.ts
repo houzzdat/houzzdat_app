@@ -43,26 +43,79 @@ function detectCriticalKeywords(transcript: string): boolean {
 }
 
 /**
- * Maps AI-generated intents to DB CHECK constraint values
+ * Maps AI-generated intents to DB CHECK constraint values.
+ * Uses normalisation → direct match → expanded mapping → fuzzy substring
+ * to maximise classification accuracy before falling back to 'information'.
  */
 function mapAiIntent(intent: string): string {
-  const normalized = (intent || '').toLowerCase().trim();
+  const normalized = (intent || '').toLowerCase().trim()
+    .replace(/[^a-z_]/g, '_')       // punctuation / spaces → underscores
+    .replace(/_+/g, '_')             // collapse multiple underscores
+    .replace(/^_|_$/g, '');          // trim leading / trailing underscores
 
+  // Direct match to the 4 DB-allowed values
   if (['update', 'approval', 'action_required', 'information'].includes(normalized)) {
     return normalized;
   }
 
+  // Expanded exact mapping for known AI response variations
   const mapping: Record<string, string> = {
+    // Approval variants
+    'approval_request': 'approval',
+    'approval_needed': 'approval',
+    'need_approval': 'approval',
+    'needs_approval': 'approval',
+    'request_approval': 'approval',
+    'pending_approval': 'approval',
+    'seeking_approval': 'approval',
+    'awaiting_approval': 'approval',
+    'permission_request': 'approval',
+    'authorization': 'approval',
+    // Action-required variants
     'material_request': 'action_required',
     'labour_request': 'action_required',
-    'approval_request': 'approval',
-    'project_update': 'update',
-    'general_communication': 'information',
+    'labor_request': 'action_required',
     'instruction': 'action_required',
-    'issue_reported': 'action_required'
+    'issue_reported': 'action_required',
+    'task': 'action_required',
+    'request': 'action_required',
+    'issue': 'action_required',
+    'problem': 'action_required',
+    'complaint': 'action_required',
+    // Update variants
+    'project_update': 'update',
+    'status_update': 'update',
+    'progress_update': 'update',
+    'daily_update': 'update',
+    'report': 'update',
+    // Information variants
+    'general_communication': 'information',
+    'info': 'information',
+    'note': 'information',
+    'general': 'information',
+    'communication': 'information',
+    'fyi': 'information',
   };
 
-  return mapping[normalized] || 'information';
+  const mapped = mapping[normalized];
+  if (mapped) return mapped;
+
+  // Fuzzy substring matching as last resort before fallback
+  if (normalized.includes('approv') || normalized.includes('permission') || normalized.includes('authoriz')) {
+    console.warn(`mapAiIntent: fuzzy-matched "${intent}" → approval`);
+    return 'approval';
+  }
+  if (normalized.includes('action') || normalized.includes('request') || normalized.includes('issue') || normalized.includes('problem')) {
+    console.warn(`mapAiIntent: fuzzy-matched "${intent}" → action_required`);
+    return 'action_required';
+  }
+  if (normalized.includes('update') || normalized.includes('progress') || normalized.includes('report')) {
+    console.warn(`mapAiIntent: fuzzy-matched "${intent}" → update`);
+    return 'update';
+  }
+
+  console.warn(`mapAiIntent: UNRECOGNIZED intent "${intent}" → defaulting to 'information'`);
+  return 'information';
 }
 
 /**
@@ -855,6 +908,7 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
 
     // Validate and map intent
     const rawIntent = ai.intent || 'information';
+    console.log(`  → Raw AI intent: "${ai.intent}" (fallback-applied: "${rawIntent}")`);
     const finalIntent = mapAiIntent(rawIntent);
 
     // Validate and map priority
@@ -1136,29 +1190,61 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
       finalUpdatePayload.transcript_en_original = transcriptEn;
     }
 
-    dbOperations.push(
-      supabase.from("voice_notes").update(finalUpdatePayload).eq("id", voiceNoteId)
-    );
+    // NOTE: voice_notes final update is done via RPC (not pushed to dbOperations)
+    // because the category column's USER-DEFINED type breaks PostgREST introspection.
 
     /* --------------------------------------------------
-       PHASE 7: EXECUTE ALL DB WRITES IN PARALLEL
-       Promise.all for maximum throughput.
-       Entity inserts are batched per table (single insert per type).
+       PHASE 7: EXECUTE ALL DB WRITES
+       Entity writes (ai_analysis, action_items, etc.) run
+       in parallel via PostgREST. The voice_notes final
+       update uses RPC to bypass PostgREST schema issues
+       with the category ENUM column.
     -------------------------------------------------- */
-    console.log(`[7] Executing ${dbOperations.length} DB writes in parallel...`);
+    console.log(`[7] Executing ${dbOperations.length} entity writes + 1 RPC update...`);
     const writeStart = performance.now();
 
-    const results = await Promise.all(dbOperations);
-
-    // Check for errors in any operation
-    for (let i = 0; i < results.length; i++) {
-      if (results[i]?.error) {
-        console.error(`Database operation ${i + 1} failed: ${results[i].error.message}`);
-        throw new Error(`Database operation ${i + 1} failed: ${results[i].error.message}`);
+    // 7a: Run entity writes in parallel (ai_analysis, action_items, structured data)
+    let entityErrors = 0;
+    if (dbOperations.length > 0) {
+      const entityResults = await Promise.all(dbOperations);
+      for (let i = 0; i < entityResults.length; i++) {
+        if (entityResults[i]?.error) {
+          entityErrors++;
+          console.error(`Entity operation ${i + 1} failed: ${entityResults[i].error.message}`);
+          // Log but don't throw — the voice_notes update below is the critical operation
+        }
       }
     }
 
-    console.log(`  ✓ All ${dbOperations.length} writes completed in ${(performance.now() - writeStart).toFixed(0)}ms`);
+    // 7b: Update voice_notes via RPC (bypasses PostgREST schema cache entirely)
+    const rpcPayload: Record<string, any> = {
+      p_voice_note_id: voiceNoteId,
+      p_status: 'completed',
+      p_category: finalIntent,
+      p_transcript_final: finalUpdatePayload.transcript_final || null,
+      p_transcript_raw_current: finalUpdatePayload.transcript_raw_current || null,
+      p_transcript_en_current: finalUpdatePayload.transcript_en_current || null,
+      p_transcription: finalUpdatePayload.transcription || null,
+      p_transcript_raw: finalUpdatePayload.transcript_raw || null,
+      p_translated_transcription: finalUpdatePayload.translated_transcription || null,
+      p_detected_language: finalUpdatePayload.detected_language || null,
+      p_detected_language_code: finalUpdatePayload.detected_language_code || null,
+      p_asr_confidence: finalUpdatePayload.asr_confidence ?? null,
+    };
+    if (finalUpdatePayload.transcript_raw_original) {
+      rpcPayload.p_transcript_raw_original = finalUpdatePayload.transcript_raw_original;
+    }
+    if (finalUpdatePayload.transcript_en_original) {
+      rpcPayload.p_transcript_en_original = finalUpdatePayload.transcript_en_original;
+    }
+
+    const { error: rpcError } = await supabase.rpc('update_voice_note_status', rpcPayload);
+    if (rpcError) {
+      console.error(`Voice note RPC update failed: ${rpcError.message}`);
+      throw new Error(`Voice note update failed: ${rpcError.message}`);
+    }
+
+    console.log(`  ✓ All writes completed in ${(performance.now() - writeStart).toFixed(0)}ms (${entityErrors} entity errors)`);
 
     // Fire-and-forget webhook to agent orchestrator
     const agentWebhookUrl = Deno.env.get('AGENT_WEBHOOK_URL');
