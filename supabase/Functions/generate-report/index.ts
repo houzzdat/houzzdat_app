@@ -314,7 +314,7 @@ Deno.serve(async (req) => {
 
     const { data: account, error: accErr } = await supabase
       .from("accounts")
-      .select("id, name, transcription_provider")
+      .select("id, company_name, transcription_provider")
       .eq("id", account_id)
       .single();
 

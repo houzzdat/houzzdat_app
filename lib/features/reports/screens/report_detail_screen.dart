@@ -1,11 +1,18 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+import 'package:houzzdat_app/core/services/notification_service.dart';
 import 'package:houzzdat_app/features/reports/widgets/report_editor_widget.dart';
 import 'package:houzzdat_app/features/reports/widgets/send_report_dialog.dart';
 import 'package:houzzdat_app/features/reports/services/pdf_generator_service.dart';
+
+/// How the manager wants to share the report with the owner.
+enum ShareMode { pushToApp, sendEmail, whatsApp, pushAndEmail }
 
 /// Screen for viewing/editing a single report with Manager and Owner tabs.
 class ReportDetailScreen extends StatefulWidget {
@@ -90,6 +97,13 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
     }
   }
 
+  String get _dateRange {
+    final startDate = _report?['start_date']?.toString() ?? '';
+    final endDate = _report?['end_date']?.toString() ?? '';
+    if (startDate == endDate) return startDate;
+    return '$startDate to $endDate';
+  }
+
   String get _mgrStatus => _report?['manager_report_status']?.toString() ?? 'draft';
   String get _ownerStatus => _report?['owner_report_status']?.toString() ?? 'draft';
 
@@ -157,10 +171,14 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
     }
   }
 
-  Future<void> _handleSendToOwner() async {
-    if (_report == null) return;
+  // ══════════════════════════════════════════════════════════════
+  // Sharing Logic
+  // ══════════════════════════════════════════════════════════════
 
-    // Fetch owner emails for the projects
+  /// Fetches deduplicated owner records for this report's projects.
+  Future<List<Map<String, dynamic>>> _fetchOwners() async {
+    if (_report == null) return [];
+
     final projectIds = (_report!['project_ids'] as List?)
             ?.map((e) => e.toString())
             .toList() ??
@@ -198,22 +216,126 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
       }
     }
 
+    return uniqueOwners;
+  }
+
+  /// Creates in-app notifications for all owners linked to this report.
+  Future<void> _notifyOwners(List<Map<String, dynamic>> owners) async {
+    for (final owner in owners) {
+      final ownerId = owner['owner_id']?.toString();
+      if (ownerId == null || ownerId.isEmpty) continue;
+
+      await NotificationService.create(
+        userId: ownerId,
+        accountId: widget.accountId,
+        type: 'report_shared',
+        title: 'New Report Available',
+        body: 'A progress report for $_dateRange has been shared with you.',
+        referenceId: widget.reportId,
+        referenceType: 'report',
+      );
+    }
+  }
+
+  /// Marks the report as sent in the database.
+  Future<void> _markReportAsSent() async {
+    await _supabase.from('reports').update({
+      'owner_report_status': 'sent',
+      'sent_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
+    }).eq('id', widget.reportId);
+  }
+
+  /// Dispatcher: routes to the correct handler based on share mode.
+  Future<void> _handleShare(ShareMode mode) async {
+    switch (mode) {
+      case ShareMode.pushToApp:
+        await _handlePushToApp();
+        break;
+      case ShareMode.sendEmail:
+        await _handleSendEmail();
+        break;
+      case ShareMode.whatsApp:
+        await _handleWhatsApp();
+        break;
+      case ShareMode.pushAndEmail:
+        await _handlePushAndEmail();
+        break;
+    }
+  }
+
+  /// Push to Owner App: mark as sent + create notifications.
+  Future<void> _handlePushToApp() async {
+    if (_report == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Push to Owner App'),
+        content: const Text(
+          'This will make the report immediately visible in the owner\'s Reports tab. '
+          'The owner report will be locked from editing. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryIndigo),
+            child: const Text('Push', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await _markReportAsSent();
+
+      final owners = await _fetchOwners();
+      await _notifyOwners(owners);
+
+      await _loadReport();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Report pushed to owner app'),
+            backgroundColor: AppTheme.successGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error pushing report: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not push report. Please try again.'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Send via Email: show dialog, generate PDF, call edge function.
+  Future<void> _handleSendEmail() async {
+    if (_report == null) return;
+
+    final owners = await _fetchOwners();
     if (!mounted) return;
 
     final result = await SendReportDialog.show(
       context,
       report: _report!,
-      owners: uniqueOwners,
+      owners: owners,
       ownerContent: _ownerContent,
     );
 
     if (result != null && result['confirmed'] == true) {
-      // Generate PDF
       try {
-        final startDate = _report!['start_date']?.toString() ?? '';
-        final endDate = _report!['end_date']?.toString() ?? '';
-        final dateRange = startDate == endDate ? startDate : '$startDate to $endDate';
-
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -226,7 +348,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
         final pdfBytes = await PdfGeneratorService.generateOwnerReportPdf(
           reportContent: _ownerContent,
           companyName: 'Project Report',
-          dateRange: dateRange,
+          dateRange: _dateRange,
           projectNames: [],
         );
 
@@ -249,7 +371,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Report sent to owner'),
+                content: Text('Report sent to owner via email'),
                 backgroundColor: AppTheme.successGreen,
               ),
             );
@@ -263,6 +385,135 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Could not send report. Please check your connection and try again.'),
+              backgroundColor: AppTheme.errorRed,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  /// Share via WhatsApp: generate PDF, save to temp, open system share sheet.
+  Future<void> _handleWhatsApp() async {
+    if (_report == null) return;
+
+    try {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Generating PDF...'),
+          backgroundColor: AppTheme.infoBlue,
+          duration: Duration(seconds: 3),
+        ),
+      );
+
+      // 1. Generate PDF
+      final pdfBytes = await PdfGeneratorService.generateOwnerReportPdf(
+        reportContent: _ownerContent,
+        companyName: 'Project Report',
+        dateRange: _dateRange,
+        projectNames: [],
+      );
+
+      // 2. Save to temp directory
+      final tempDir = await getTemporaryDirectory();
+      final dateLabel = _dateRange.replaceAll(' ', '_').replaceAll('/', '-');
+      final pdfFile = File('${tempDir.path}/Project_Report_$dateLabel.pdf');
+      await pdfFile.writeAsBytes(pdfBytes);
+
+      // 3. Open system share sheet (user picks WhatsApp)
+      await Share.shareXFiles(
+        [XFile(pdfFile.path)],
+        text: 'Project Progress Report \u2014 $_dateRange',
+      );
+
+      // 4. Mark as sent and notify owners
+      await _markReportAsSent();
+      final owners = await _fetchOwners();
+      await _notifyOwners(owners);
+
+      await _loadReport();
+    } catch (e) {
+      debugPrint('Error sharing via WhatsApp: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not share report. Please try again.'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Push to App + Send via Email: show email dialog, then do both actions.
+  Future<void> _handlePushAndEmail() async {
+    if (_report == null) return;
+
+    final owners = await _fetchOwners();
+    if (!mounted) return;
+
+    final result = await SendReportDialog.show(
+      context,
+      report: _report!,
+      owners: owners,
+      ownerContent: _ownerContent,
+    );
+
+    if (result != null && result['confirmed'] == true) {
+      try {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sharing report via email and in-app...'),
+            backgroundColor: AppTheme.infoBlue,
+            duration: Duration(seconds: 5),
+          ),
+        );
+
+        final pdfBytes = await PdfGeneratorService.generateOwnerReportPdf(
+          reportContent: _ownerContent,
+          companyName: 'Project Report',
+          dateRange: _dateRange,
+          projectNames: [],
+        );
+
+        // Send via edge function (handles email + sets status to 'sent')
+        final response = await _supabase.functions.invoke(
+          'send-report-email',
+          body: {
+            'report_id': widget.reportId,
+            'account_id': widget.accountId,
+            'to_email': result['email'],
+            'subject': result['subject'],
+            'message': result['message'],
+            'pdf_base64': _bytesToBase64(pdfBytes),
+          },
+        );
+
+        final data = response.data;
+        if (data['success'] == true) {
+          // Also create in-app notifications for all owners
+          await _notifyOwners(owners);
+
+          await _loadReport();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Report shared via email and in-app'),
+                backgroundColor: AppTheme.successGreen,
+              ),
+            );
+          }
+        } else {
+          throw Exception(data['error'] ?? 'Send failed');
+        }
+      } catch (e) {
+        debugPrint('Error sharing report: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not share report. Please check your connection and try again.'),
               backgroundColor: AppTheme.errorRed,
             ),
           );
@@ -358,6 +609,10 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
       }
     }
   }
+
+  // ══════════════════════════════════════════════════════════════
+  // Build UI
+  // ══════════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {
@@ -479,7 +734,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Owner report sent${_report?['sent_at'] != null ? ' on ${_formatDate(_report!['sent_at'])}' : ''}',
+              'Owner report shared${_report?['sent_at'] != null ? ' on ${_formatDate(_report!['sent_at'])}' : ''}',
               style: const TextStyle(
                 color: AppTheme.successGreen,
                 fontWeight: FontWeight.w600,
@@ -487,12 +742,33 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
               ),
             ),
           ),
-          // Resend button
-          TextButton.icon(
-            onPressed: _handleSendToOwner,
-            icon: const Icon(Icons.send, size: 16),
-            label: const Text('Resend'),
-            style: TextButton.styleFrom(foregroundColor: AppTheme.primaryIndigo),
+          // Reshare button
+          PopupMenuButton<ShareMode>(
+            onSelected: _handleShare,
+            tooltip: 'Reshare',
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                border: Border.all(color: AppTheme.primaryIndigo),
+                borderRadius: BorderRadius.circular(AppTheme.radiusM),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.share, size: 16, color: AppTheme.primaryIndigo),
+                  SizedBox(width: 6),
+                  Text(
+                    'Reshare',
+                    style: TextStyle(
+                      color: AppTheme.primaryIndigo,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            itemBuilder: (context) => _buildShareMenuItems(),
           ),
         ],
       );
@@ -514,13 +790,32 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
           ),
           const SizedBox(width: AppTheme.spacingS),
           Expanded(
-            child: ElevatedButton.icon(
-              onPressed: _handleSendToOwner,
-              icon: const Icon(Icons.send, size: 18),
-              label: const Text('Send to Owner'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.successGreen,
-                foregroundColor: Colors.white,
+            child: PopupMenuButton<ShareMode>(
+              onSelected: _handleShare,
+              offset: const Offset(0, -220),
+              tooltip: 'Share report',
+              itemBuilder: (context) => _buildShareMenuItems(),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppTheme.successGreen,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusL),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.share, size: 18, color: Colors.white),
+                    SizedBox(width: 8),
+                    Text(
+                      'Share',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -564,6 +859,51 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
         ),
       ],
     );
+  }
+
+  List<PopupMenuEntry<ShareMode>> _buildShareMenuItems() {
+    return const [
+      PopupMenuItem(
+        value: ShareMode.pushToApp,
+        child: ListTile(
+          leading: Icon(Icons.phone_android, size: 22, color: AppTheme.primaryIndigo),
+          title: Text('Push to Owner App', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: Text('Appears in their Reports tab', style: TextStyle(fontSize: 11)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+      PopupMenuItem(
+        value: ShareMode.sendEmail,
+        child: ListTile(
+          leading: Icon(Icons.email_outlined, size: 22, color: AppTheme.warningOrange),
+          title: Text('Send via Email', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: Text('Send PDF as email attachment', style: TextStyle(fontSize: 11)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+      PopupMenuItem(
+        value: ShareMode.whatsApp,
+        child: ListTile(
+          leading: Icon(Icons.chat, size: 22, color: Color(0xFF25D366)),
+          title: Text('Share via WhatsApp', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: Text('Share PDF via WhatsApp', style: TextStyle(fontSize: 11)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+      PopupMenuItem(
+        value: ShareMode.pushAndEmail,
+        child: ListTile(
+          leading: Icon(Icons.share, size: 22, color: AppTheme.successGreen),
+          title: Text('Push to App + Email', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: Text('In-app notification + email', style: TextStyle(fontSize: 11)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+    ];
   }
 
   String _formatDate(String? dateStr) {

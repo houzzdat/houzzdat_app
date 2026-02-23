@@ -121,6 +121,8 @@ class _PromptsManagementScreenState extends State<PromptsManagementScreen> {
         return AppTheme.successGreen;
       case 'gemini':
         return AppTheme.infoBlue;
+      case 'sarvam':
+        return AppTheme.primaryIndigo;
       default:
         return AppTheme.textSecondary;
     }

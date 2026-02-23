@@ -10,7 +10,23 @@
       "Bash(flutter pub get:*)",
       "Bash(findstr:*)",
       "Bash(Select-String \"report\")",
-      "Bash(flutter test:*)"
+      "Bash(flutter test:*)",
+      "Bash(ls \"C:\\\\Users\\\\mywor\\\\Downloads\\\\Sitevoice_Dev\\\\Houzzapp\\\\lib\\\\features\\\\voice_notes\\\\widgets\"\" 2>nul || echo \"Directory does not exist \")",
+      "Bash(ls \"C:\\\\Users\\\\mywor\\\\Downloads\\\\Sitevoice_Dev\\\\Houzzapp\\\\supabase\\\\Migrations\"\" 2>/dev/null || ls \"/mnt/c/Users/mywor/Downloads/Sitevoice_Dev/Houzzapp/supabase/Migrations/\" 2>/dev/null || echo \"Checking path... \")",
+      "Bash(for file in C:UsersmyworDownloadsSitevoice_DevHouzzappsupabaseMigrations*.sql)",
+      "Bash(do grep -l \"CREATE TYPE\" \"$file\")",
+      "Bash(done)",
+      "WebFetch(domain:supabase.github.io)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix voice pipeline: team card redesign, trigger auth, classification, and DB write fixes\n\n- Redesign team cards with compact layout, inline action icons, status pills\n- Add SMS text messaging via url_launcher sms: scheme\n- Fix transcribe trigger 401 auth by hardcoding anon key fallback\n- Harden mapAiIntent\\(\\) with 30+ expanded mappings and fuzzy matching\n- Fix voice_note_completed_webhook trigger: use PERFORM instead of SELECT for net.http_post\\(\\)\n- Add RPC function update_voice_note_status to bypass PostgREST ENUM issues\n- Rewrite Phase 7 to use RPC for final voice_notes update\n- Convert voice_notes.category from broken ENUM to TEXT with CHECK constraint\n- Add critical_detected to notifications type constraint\n- Add voice_note_status ENUM migration\n- Add quick tag overlay, review queue, progress tab, attendance tab\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git status:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nRemove 21 redundant files and fix materials query\n\nCodebase cleanup removing ~4,000 lines of dead code:\n- Delete unused voice_note_player_card, editable_transcription_box, voice_note_card_view_model\n- Delete entire orphaned kanban cluster \\(7 files: kanban dashboard, tabs, layout widgets, settings service\\)\n- Delete old edge function backup \\(index_0.ts\\)\n- Delete superseded PDFs \\(roadmap V1/V2, vision V1\\), duplicate docs, and loose SQL scripts\n- Move schema reference file from Migrations/ to docs/ \\(not a runnable migration\\)\n- Fix MaterialStateAgent query to use correct column names \\(material_name, material_category\\)\n- Add project_id/account_id to edge function entity inserts\n- Add isScrollControlled + error handling to QuickTag overlay for mobile web\n- Add diagnostic logging to recording/upload flow\n- New migration: add project_id/account_id to entity tables\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(ls:*)",
+      "Bash(psql:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix materials tab empty state and event_type constraint violation\n\n- Wrap parallel DB fetches in MaterialStateAgent with _safeFetch\\(\\) so\n  one RLS-blocked query \\(boq_items, finance_transactions\\) doesn''t crash\n  the entire Future.wait and silently show \"No material data\"\n- Add mapEventType\\(\\) to edge function to normalize AI-returned event\n  types \\(e.g. \"update\", \"issue\"\\) to DB CHECK constraint values\n  \\(project_update, issue_reported, approval_request, instruction, information\\)\n- Add diagnostic logging for each material fetch query\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(flutter build:*)",
+      "WebFetch(domain:docs.sarvam.ai)"
     ]
   }
 }

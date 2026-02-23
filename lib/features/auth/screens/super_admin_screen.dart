@@ -24,6 +24,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
   final _adminPasswordController = TextEditingController();
 
   String _selectedProvider = 'groq';
+  String _sarvamPipelineMode = 'two_step';
   List<String> _selectedLanguages = ['en'];
   bool _isLoading = false;
 
@@ -54,6 +55,8 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
         'admin_email': _adminEmailController.text.trim(),
         'admin_password': _adminPasswordController.text.trim(),
         'transcription_provider': _selectedProvider,
+        if (_selectedProvider == 'sarvam')
+          'sarvam_pipeline_mode': _sarvamPipelineMode,
       };
       if (_adminNameController.text.trim().isNotEmpty) {
         body['admin_name'] = _adminNameController.text.trim();
@@ -316,10 +319,48 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
                       DropdownMenuItem(
                           value: 'gemini',
                           child: Text('Gemini 1.5 Flash (Google)')),
+                      DropdownMenuItem(
+                          value: 'sarvam',
+                          child: Text('Sarvam AI (Indian Languages)')),
                     ],
                     onChanged: (val) =>
                         setState(() => _selectedProvider = val!),
                   ),
+                  if (_selectedProvider == 'sarvam') ...[
+                    const SizedBox(height: AppTheme.spacingM),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Sarvam Pipeline Mode',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    ),
+                    const SizedBox(height: AppTheme.spacingXS),
+                    RadioListTile<String>(
+                      title: const Text('Two-step (ASR + Translate)',
+                          style: TextStyle(fontSize: 13)),
+                      subtitle: const Text(
+                        '2 API calls. Preserves original-language transcript.',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      value: 'two_step',
+                      groupValue: _sarvamPipelineMode,
+                      dense: true,
+                      onChanged: (val) =>
+                          setState(() => _sarvamPipelineMode = val!),
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Single call (Direct translate)',
+                          style: TextStyle(fontSize: 13)),
+                      subtitle: const Text(
+                        '1 API call. Faster, English output only.',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      value: 'single',
+                      groupValue: _sarvamPipelineMode,
+                      dense: true,
+                      onChanged: (val) =>
+                          setState(() => _sarvamPipelineMode = val!),
+                    ),
+                  ],
                 ],
               ),
             ),

@@ -542,6 +542,12 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
   }
 
   Widget _buildProviderRow(String provider) {
+    final sarvamMode =
+        _companyInfo?['sarvam_pipeline_mode']?.toString() ?? 'two_step';
+    final modeLabel = provider == 'sarvam'
+        ? ' (${sarvamMode == 'single' ? 'Single call' : 'Two-step'})'
+        : '';
+
     return InkWell(
       borderRadius: BorderRadius.circular(AppTheme.radiusS),
       onTap: () => _showChangeProviderDialog(provider),
@@ -561,7 +567,7 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
             ),
             Expanded(
               child: Text(
-                _getProviderLabel(provider),
+                '${_getProviderLabel(provider)}$modeLabel',
                 style: AppTheme.bodySmall.copyWith(
                   color: AppTheme.primaryIndigo,
                   fontWeight: FontWeight.w600,
@@ -578,6 +584,9 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
 
   Future<void> _showChangeProviderDialog(String currentProvider) async {
     String selectedProvider = currentProvider;
+    String selectedSarvamMode =
+        _companyInfo?['sarvam_pipeline_mode']?.toString() ?? 'two_step';
+    final originalSarvamMode = selectedSarvamMode;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -593,7 +602,7 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
                 style: AppTheme.bodySmall,
               ),
               const SizedBox(height: AppTheme.spacingL),
-              ...['groq', 'openai', 'gemini'].map((provider) {
+              ...['groq', 'openai', 'gemini', 'sarvam'].map((provider) {
                 final isSelected = selectedProvider == provider;
                 return RadioListTile<String>(
                   title: Text(
@@ -617,6 +626,69 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
                   },
                 );
               }),
+              // Sarvam pipeline mode sub-option
+              if (selectedProvider == 'sarvam') ...[
+                const SizedBox(height: AppTheme.spacingS),
+                Container(
+                  padding: const EdgeInsets.all(AppTheme.spacingM),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryIndigo.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusM),
+                    border: Border.all(
+                      color: AppTheme.primaryIndigo.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Sarvam Pipeline Mode',
+                        style: AppTheme.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.primaryIndigo,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      RadioListTile<String>(
+                        title: const Text('Two-step',
+                            style: TextStyle(fontSize: 13)),
+                        subtitle: const Text(
+                          'ASR + Translate (2 API calls). Preserves original-language transcript.',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        value: 'two_step',
+                        groupValue: selectedSarvamMode,
+                        activeColor: AppTheme.primaryIndigo,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() => selectedSarvamMode = value);
+                          }
+                        },
+                      ),
+                      RadioListTile<String>(
+                        title: const Text('Single call',
+                            style: TextStyle(fontSize: 13)),
+                        subtitle: const Text(
+                          'Direct speech-to-English (1 API call). Faster, no original transcript.',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        value: 'single',
+                        groupValue: selectedSarvamMode,
+                        activeColor: AppTheme.primaryIndigo,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() => selectedSarvamMode = value);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: AppTheme.spacingS),
               Container(
                 padding: const EdgeInsets.all(AppTheme.spacingM),
@@ -649,7 +721,8 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              onPressed: selectedProvider == currentProvider
+              onPressed: (selectedProvider == currentProvider &&
+                      selectedSarvamMode == originalSarvamMode)
                   ? null
                   : () => Navigator.pop(context, true),
               child: const Text('Save'),
@@ -659,17 +732,32 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
       ),
     );
 
-    if (confirmed == true && selectedProvider != currentProvider && mounted) {
+    if (confirmed == true && mounted) {
       try {
-        await _supabase.from('accounts').update({
+        final updates = <String, dynamic>{
           'transcription_provider': selectedProvider,
-        }).eq('id', widget.accountId);
+        };
+        // Always write sarvam_pipeline_mode when selecting Sarvam,
+        // reset to default when switching away
+        if (selectedProvider == 'sarvam') {
+          updates['sarvam_pipeline_mode'] = selectedSarvamMode;
+        } else {
+          updates['sarvam_pipeline_mode'] = 'two_step';
+        }
+
+        await _supabase
+            .from('accounts')
+            .update(updates)
+            .eq('id', widget.accountId);
 
         if (mounted) {
+          final modeLabel = selectedProvider == 'sarvam'
+              ? ' (${selectedSarvamMode == 'single' ? 'Single call' : 'Two-step'})'
+              : '';
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                  'Provider changed to ${_getProviderLabel(selectedProvider)}'),
+                  'Provider changed to ${_getProviderLabel(selectedProvider)}$modeLabel'),
               backgroundColor: AppTheme.successGreen,
             ),
           );
@@ -696,6 +784,8 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
         return 'High accuracy, paid. Uses Whisper + GPT-4o Mini.';
       case 'gemini':
         return 'Google AI. Uses Gemini 1.5 Flash multimodal.';
+      case 'sarvam':
+        return 'Indian languages specialist. Uses Saaras v3 (22+ langs).';
       default:
         return '';
     }
@@ -773,6 +863,8 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
         return 'OpenAI Whisper (Paid)';
       case 'gemini':
         return 'Gemini Flash (Google)';
+      case 'sarvam':
+        return 'Sarvam AI (Indian Langs)';
       default:
         return provider;
     }

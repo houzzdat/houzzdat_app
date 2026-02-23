@@ -13,7 +13,7 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { company_name, admin_email, admin_password, transcription_provider, admin_name, admin_languages } = await req.json()
+    const { company_name, admin_email, admin_password, transcription_provider, sarvam_pipeline_mode, admin_name, admin_languages } = await req.json()
 
     // Normalize languages: default to ['en'] if not provided
     const preferredLanguages: string[] = Array.isArray(admin_languages) && admin_languages.length > 0
@@ -28,13 +28,18 @@ serve(async (req: Request) => {
     )
 
     // 1. Create the Account (Company) entry with status
+    const accountInsert: Record<string, any> = {
+      company_name,
+      status: 'active',
+      transcription_provider: transcription_provider || 'groq',
+    }
+    // Only set sarvam_pipeline_mode when using Sarvam provider
+    if (transcription_provider === 'sarvam' && sarvam_pipeline_mode) {
+      accountInsert.sarvam_pipeline_mode = sarvam_pipeline_mode
+    }
     const { data: account, error: accError } = await supabaseAdmin
       .from('accounts')
-      .insert({
-        company_name,
-        status: 'active',
-        transcription_provider: transcription_provider || 'groq',
-      })
+      .insert(accountInsert)
       .select().single()
     if (accError) throw accError
 

@@ -35,6 +35,8 @@ class CompanyCardWidget extends StatelessWidget {
         : null;
     final transcriptionProvider =
         company['transcription_provider']?.toString() ?? 'groq';
+    final sarvamMode =
+        company['sarvam_pipeline_mode']?.toString() ?? 'two_step';
 
     final isActive = status == 'active';
     final isArchived = status == 'archived';
@@ -233,7 +235,9 @@ class CompanyCardWidget extends StatelessWidget {
                       size: 14, color: AppTheme.textSecondary),
                   const SizedBox(width: 4),
                   Text(
-                    _getProviderLabel(transcriptionProvider),
+                    transcriptionProvider == 'sarvam'
+                        ? '${_getProviderLabel(transcriptionProvider)} (${sarvamMode == 'single' ? '1-step' : '2-step'})'
+                        : _getProviderLabel(transcriptionProvider),
                     style: AppTheme.bodySmall.copyWith(
                       color: AppTheme.textSecondary,
                     ),
@@ -335,6 +339,8 @@ class CompanyCardWidget extends StatelessWidget {
         return 'OpenAI Whisper';
       case 'gemini':
         return 'Gemini Flash';
+      case 'sarvam':
+        return 'Sarvam AI';
       default:
         return provider;
     }

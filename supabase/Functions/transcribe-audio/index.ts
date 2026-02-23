@@ -357,6 +357,139 @@ async function getAudioBase64(audioData: AudioData): Promise<string> {
 }
 
 /* ============================================================
+   SARVAM AI PROVIDER FUNCTIONS
+   Uses Sarvam's Saaras v3 model for Indian language ASR.
+   - Transcribe: https://api.sarvam.ai/speech-to-text
+   - Translate:  https://api.sarvam.ai/speech-to-text-translate
+   Sarvam natively supports 22 Indian languages + English.
+============================================================ */
+
+/**
+ * Maps ISO 639-1/3 codes (used in our DB) to Sarvam BCP-47 codes.
+ * Sarvam uses BCP-47 format like 'hi-IN', 'ta-IN', etc.
+ */
+const SARVAM_LANG_MAP: { [key: string]: string } = {
+  'hi': 'hi-IN', 'bn': 'bn-IN', 'kn': 'kn-IN', 'ml': 'ml-IN',
+  'mr': 'mr-IN', 'or': 'od-IN', 'pa': 'pa-IN', 'ta': 'ta-IN',
+  'te': 'te-IN', 'en': 'en-IN', 'gu': 'gu-IN', 'as': 'as-IN',
+  'ur': 'ur-IN', 'ne': 'ne-IN', 'kok': 'kok-IN', 'ks': 'ks-IN',
+  'sd': 'sd-IN', 'sa': 'sa-IN', 'sat': 'sat-IN', 'mni': 'mni-IN',
+  'bo': 'brx-IN', 'mai': 'mai-IN', 'doi': 'doi-IN'
+};
+
+/**
+ * Reverse-maps Sarvam BCP-47 language codes back to our ISO 639-1/3 codes.
+ */
+function sarvamLangToIso(sarvamCode: string): string {
+  if (!sarvamCode) return 'unknown';
+  // Strip the -IN suffix to get the base code
+  const base = sarvamCode.replace(/-IN$/, '');
+  // Handle special mappings
+  if (base === 'od') return 'or';   // Odia
+  if (base === 'brx') return 'bo';  // Bodo
+  // Most codes map directly
+  return base;
+}
+
+/**
+ * Performs ASR using Sarvam AI's Saaras v3 model.
+ * Returns transcript in the original spoken language.
+ */
+async function performSarvamASR(
+  key: string,
+  audioData: AudioData,
+  preferredLanguage?: string
+) {
+  const formData = new FormData();
+  formData.append('file', new File([audioData.blob], audioData.fileName));
+  formData.append('model', 'saaras:v3');
+  formData.append('mode', 'transcribe');
+
+  // Map user's preferred language to Sarvam BCP-47 format
+  if (preferredLanguage && preferredLanguage !== 'en') {
+    const sarvamLang = SARVAM_LANG_MAP[preferredLanguage];
+    if (sarvamLang) {
+      formData.append('language_code', sarvamLang);
+    } else {
+      formData.append('language_code', 'unknown'); // Auto-detect
+    }
+  } else {
+    formData.append('language_code', 'unknown'); // Auto-detect
+  }
+
+  console.log('  → Calling Sarvam AI Saaras v3 for transcription...');
+  const t0 = performance.now();
+
+  const res = await fetchWithRetry('https://api.sarvam.ai/speech-to-text', {
+    method: 'POST',
+    headers: { 'api-subscription-key': key },
+    body: formData
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Sarvam ASR failed: ${data.error?.message || data.detail || res.status}`);
+  }
+
+  console.log(`  ✓ Sarvam ASR completed in ${(performance.now() - t0).toFixed(0)}ms`);
+
+  return {
+    text: data.transcript,
+    language: sarvamLangToIso(data.language_code),
+    confidence: data.language_probability || null
+  };
+}
+
+/**
+ * Performs speech-to-text translation using Sarvam AI.
+ * Transcribes audio and translates to English in a single API call.
+ * This is more accurate than separate ASR + LLM translation for Indian languages.
+ */
+async function performSarvamTranslate(
+  key: string,
+  audioData: AudioData,
+  preferredLanguage?: string
+) {
+  const formData = new FormData();
+  formData.append('file', new File([audioData.blob], audioData.fileName));
+  formData.append('model', 'saaras:v3');
+
+  // Language hint for better accuracy
+  if (preferredLanguage && preferredLanguage !== 'en') {
+    const sarvamLang = SARVAM_LANG_MAP[preferredLanguage];
+    if (sarvamLang) {
+      formData.append('language_code', sarvamLang);
+    } else {
+      formData.append('language_code', 'unknown');
+    }
+  } else {
+    formData.append('language_code', 'unknown');
+  }
+
+  console.log('  → Calling Sarvam AI speech-to-text-translate...');
+  const t0 = performance.now();
+
+  const res = await fetchWithRetry('https://api.sarvam.ai/speech-to-text-translate', {
+    method: 'POST',
+    headers: { 'api-subscription-key': key },
+    body: formData
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Sarvam translate failed: ${data.error?.message || data.detail || res.status}`);
+  }
+
+  console.log(`  ✓ Sarvam translation completed in ${(performance.now() - t0).toFixed(0)}ms`);
+
+  return {
+    text: data.transcript,
+    language: sarvamLangToIso(data.language_code),
+    confidence: data.language_probability || null
+  };
+}
+
+/* ============================================================
    GEMINI PROVIDER FUNCTIONS (uses AudioData, same pipeline)
 ============================================================ */
 
@@ -613,12 +746,15 @@ async function callRegistryLLM(
 /* ============================================================
    MAIN HANDLER — Streamlined Pipeline (All Providers)
 
-   Same optimized process for Groq, OpenAI, and Gemini:
+   Same optimized process for Groq, OpenAI, Gemini, and Sarvam:
    Download audio ONCE → ASR (original lang) →
-   LLM text translate → LLM classify → Parallel DB writes
+   Translate → LLM classify → Parallel DB writes
+
+   Sarvam uses its own ASR + translate APIs for Indian languages,
+   with Groq LLM as fallback for classification.
 
    Provider is selected per-account by super admin via
-   accounts.transcription_provider ('groq' | 'openai' | 'gemini')
+   accounts.transcription_provider ('groq' | 'openai' | 'gemini' | 'sarvam')
 ============================================================ */
 
 Deno.serve(async (req) => {
@@ -650,7 +786,7 @@ Deno.serve(async (req) => {
       .from("voice_notes")
       .select(`
         *,
-        accounts(transcription_provider),
+        accounts(transcription_provider, sarvam_pipeline_mode),
         users!voice_notes_user_id_fkey(id, role, account_id, reports_to, preferred_language, preferred_languages),
         projects(id, name, account_id)
       `)
@@ -670,6 +806,17 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get(`${providerName.toUpperCase()}_API_KEY`);
     if (!apiKey) throw new Error(`API Key for ${providerName} not found`);
 
+    // Sarvam pipeline mode: 'single' (1 API call) or 'two_step' (ASR + translate)
+    const sarvamMode = voiceNote.accounts?.sarvam_pipeline_mode || 'two_step';
+    const isSarvamSingle = providerName === 'sarvam' && sarvamMode === 'single';
+
+    // Sarvam handles ASR natively but needs a separate LLM for classification.
+    // We use Groq as the fallback LLM when the provider is Sarvam.
+    const llmProvider = providerName === 'sarvam' ? 'groq' : providerName;
+    const llmApiKey = providerName === 'sarvam'
+      ? (Deno.env.get('GROQ_API_KEY') || apiKey)
+      : apiKey;
+
     // Get user's preferred language for ASR hint
     const userLang = voiceNote.users?.preferred_language || 'en';
 
@@ -682,12 +829,15 @@ Deno.serve(async (req) => {
        Downloads audio ONCE and fetches both AI prompts
        in parallel to minimize wait time.
     -------------------------------------------------- */
-    console.log(`[1.5] Prefetching audio + AI prompts in parallel (provider: ${providerName})...`);
+    console.log(`[1.5] Prefetching audio + AI prompts in parallel (provider: ${providerName}, llm: ${llmProvider}, sarvam_mode: ${sarvamMode})...`);
     const prefetchStart = performance.now();
 
     // Only download audio if we need ASR (transcript not already available)
     const needsASR = !voiceNote.transcript_raw_original;
     const needsTranslation = !voiceNote.transcript_en_original;
+
+    // For Sarvam: fetch prompts for the 'sarvam' provider first, falling back to llmProvider
+    const promptProvider = providerName;
 
     const [audioData, translationPromptResult, analysisPromptResult, glossaryResult, correctionsResult] = await Promise.all([
       // 1. Download audio once (only if needed for ASR)
@@ -700,7 +850,7 @@ Deno.serve(async (req) => {
         ? supabase
             .from("ai_prompts")
             .select("*")
-            .eq("provider", providerName)
+            .eq("provider", promptProvider)
             .eq("purpose", "translation_normalization")
             .eq("is_active", true)
             .limit(1)
@@ -711,7 +861,7 @@ Deno.serve(async (req) => {
       supabase
         .from("ai_prompts")
         .select("*")
-        .eq("provider", providerName)
+        .eq("provider", promptProvider)
         .eq("purpose", "voice_note_analysis")
         .eq("is_active", true)
         .order("version", { ascending: false })
@@ -752,21 +902,38 @@ Deno.serve(async (req) => {
     let detectedLangCode = voiceNote.detected_language_code;
     let asrConfidence: number | undefined;
 
-    if (!transcriptRaw && audioData) {
+    // Track which models handled each pipeline step (written to voice_note_ai_analysis)
+    let asrModelName = '';
+    let translationModelName = '';
+
+    if (isSarvamSingle && !transcriptRaw && audioData) {
+      // ── SARVAM SINGLE MODE: Skip ASR, go directly to translate in Phase 3 ──
+      console.log("[2] Sarvam single-call mode — skipping separate ASR, will translate directly in Phase 3");
+      asrModelName = 'none (single pipeline)';
+    } else if (!transcriptRaw && audioData) {
       console.log("[2] Running ASR (original language)...");
 
-      if (providerName === 'gemini') {
+      if (providerName === 'sarvam') {
+        // Sarvam AI Saaras v3 — native Indian language ASR (two-step mode)
+        const asr = await performSarvamASR(apiKey, audioData, userLang);
+        transcriptRaw = asr.text;
+        detectedLangCode = asr.language;
+        asrConfidence = asr.confidence ?? undefined;
+        asrModelName = 'saaras:v3';
+      } else if (providerName === 'gemini') {
         // Gemini uses multimodal audio transcription
         const asr = await performGeminiASR(apiKey, audioData, CONSTRUCTION_CONTEXT_PROMPT);
         transcriptRaw = asr.text;
         detectedLangCode = asr.language;
         asrConfidence = asr.confidence ?? undefined;
+        asrModelName = 'gemini-1.5-flash';
       } else {
         // Groq/OpenAI Whisper — uses pre-downloaded audio blob
         const asr = await performASR(providerName, apiKey, audioData, userLang);
         transcriptRaw = asr.text;
         detectedLangCode = asr.language;
         asrConfidence = asr.confidence ?? undefined;
+        asrModelName = providerName === 'groq' ? 'whisper-large-v3' : 'whisper-1';
       }
 
       // PROGRESSIVE WRITE: ASR result available immediately.
@@ -803,21 +970,79 @@ Deno.serve(async (req) => {
     }
 
     /* --------------------------------------------------
-       PHASE 3: TRANSLATION TO ENGLISH (Text-based only)
-       Uses the original-language transcript from Phase 2.
-       Calls the account's LLM to translate TEXT → English.
-       NO audio re-download. NO Whisper /translations.
+       PHASE 3: TRANSLATION TO ENGLISH
+       For Sarvam: Uses speech-to-text-translate endpoint
+       (audio → English in one call, better for Indian langs).
+       For others: LLM text-based translation.
+       Sarvam fallback → Groq LLM if translate API fails.
     -------------------------------------------------- */
     let transcriptEn = voiceNote.transcript_en_original;
 
     if (!transcriptEn) {
       console.log("[3] Running text translation...");
 
-      if (detectedLangCode === 'en') {
+      if (isSarvamSingle && audioData) {
+        // ── SARVAM SINGLE MODE: One API call → English directly from audio ──
+        // No separate ASR was done, so this is the only Sarvam call.
+        // The result is English text; we also use it as transcript_raw since
+        // there is no original-language transcript in single mode.
+        try {
+          const sarvamTranslation = await performSarvamTranslate(apiKey, audioData, userLang);
+          transcriptEn = sarvamTranslation.text;
+          translationModelName = 'sarvam-stt-translate';
+          detectedLangCode = sarvamTranslation.language || 'unknown';
+          asrConfidence = sarvamTranslation.confidence ?? undefined;
+
+          // In single mode, use the English output as the raw transcript too
+          if (!transcriptRaw) {
+            transcriptRaw = transcriptEn;
+          }
+
+          console.log("✓ Sarvam single-call: audio → English completed");
+
+          // Progressive write: both ASR + translation done in one shot
+          const singleLangName = LANGUAGE_NAMES[detectedLangCode] || detectedLangCode;
+          const singlePayload: any = {
+            transcript_raw_current: transcriptRaw,
+            transcript_raw: transcriptRaw,
+            transcript_en_current: transcriptEn,
+            transcript_final: transcriptEn,
+            detected_language_code: detectedLangCode,
+            detected_language: singleLangName,
+            asr_confidence: asrConfidence,
+            status: 'translated',
+            transcription: transcriptEn,
+          };
+          if (!hasOriginalRaw) singlePayload.transcript_raw_original = transcriptRaw;
+          if (!hasOriginalEn) singlePayload.transcript_en_original = transcriptEn;
+
+          await supabase.from("voice_notes").update(singlePayload).eq("id", voiceNoteId);
+          console.log("✓ Single-call pipeline → status='translated'");
+        } catch (sarvamSingleErr: any) {
+          console.error(`Sarvam single-call failed: ${sarvamSingleErr.message}`);
+          throw sarvamSingleErr; // No fallback for single mode — the whole point is 1 call
+        }
+      } else if (detectedLangCode === 'en') {
         transcriptEn = transcriptRaw;
+        translationModelName = 'none (English source)';
         console.log("✓ Transcript already in English");
-      } else {
-        // LLM text translation — translate the original-language transcript to English
+      } else if (providerName === 'sarvam' && audioData) {
+        // Sarvam two-step: Use the dedicated speech-to-text-translate endpoint for Indian→English
+        // This gives better translation quality than separate ASR + LLM for Indian languages
+        try {
+          const sarvamTranslation = await performSarvamTranslate(apiKey, audioData, userLang);
+          transcriptEn = sarvamTranslation.text;
+          translationModelName = 'sarvam-stt-translate';
+          console.log("✓ Sarvam speech-to-text-translate completed");
+        } catch (sarvamTransErr: any) {
+          console.warn(`Sarvam translate failed (${sarvamTransErr.message}), falling back to LLM translation`);
+          // Fall through to LLM translation below
+          transcriptEn = null as any;
+        }
+      }
+
+      // LLM text translation fallback (also primary path for Groq/OpenAI/Gemini)
+      if (!transcriptEn && detectedLangCode !== 'en') {
         if (translationPrompt) {
           // Phase B: Inject glossary terms for translation context
           let glossaryHint = '';
@@ -830,7 +1055,7 @@ Deno.serve(async (req) => {
             .replace('{{LANGUAGE}}', LANGUAGE_NAMES[detectedLangCode] || detectedLangCode)
             .replace('{{TRANSCRIPT}}', transcriptRaw) + glossaryHint;
 
-          const translationResponse = await callRegistryLLM(providerName, apiKey, {
+          const translationResponse = await callRegistryLLM(llmProvider, llmApiKey, {
             prompt: finalPrompt,
             isJson: true
           });
@@ -840,32 +1065,40 @@ Deno.serve(async (req) => {
             || translationResponse.translation
             || transcriptRaw;
 
+          // Track which LLM model did the translation
+          translationModelName = llmProvider === 'groq' ? 'llama-3.3-70b'
+            : llmProvider === 'gemini' ? 'gemini-1.5-flash'
+            : 'gpt-4o-mini';
+
           console.log("✓ LLM text translation completed");
         } else {
           console.warn("No translation prompt found, using raw transcript");
+          translationModelName = 'none (no prompt)';
           transcriptEn = transcriptRaw;
         }
       }
 
       // PROGRESSIVE WRITE: Translation available immediately.
-      // Status → 'translated' so the client can show the English translation.
-      const transLanguageName = LANGUAGE_NAMES[detectedLangCode] || detectedLangCode;
-      const updateEnPayload: any = {
-        transcript_en_current: transcriptEn,
-        transcript_final: transcriptEn,
-        status: 'translated',
-        // Update legacy transcription to include both languages
-        transcription: detectedLangCode === 'en'
-          ? transcriptEn
-          : `[${transLanguageName}] ${transcriptRaw}\n\n[English] ${transcriptEn}`,
-      };
+      // (Skip for Sarvam single mode — already written above)
+      if (!isSarvamSingle) {
+        const transLanguageName = LANGUAGE_NAMES[detectedLangCode] || detectedLangCode;
+        const updateEnPayload: any = {
+          transcript_en_current: transcriptEn,
+          transcript_final: transcriptEn,
+          status: 'translated',
+          // Update legacy transcription to include both languages
+          transcription: detectedLangCode === 'en'
+            ? transcriptEn
+            : `[${transLanguageName}] ${transcriptRaw}\n\n[English] ${transcriptEn}`,
+        };
 
-      if (!hasOriginalEn) {
-        updateEnPayload.transcript_en_original = transcriptEn;
+        if (!hasOriginalEn) {
+          updateEnPayload.transcript_en_original = transcriptEn;
+        }
+
+        await supabase.from("voice_notes").update(updateEnPayload).eq("id", voiceNoteId);
+        console.log("✓ Translation completed → status='translated' — card shows English now");
       }
-
-      await supabase.from("voice_notes").update(updateEnPayload).eq("id", voiceNoteId);
-      console.log("✓ Translation completed → status='translated' — card shows English now");
     } else {
       console.log("[3] Translation already completed, skipping...");
     }
@@ -878,8 +1111,8 @@ Deno.serve(async (req) => {
     console.log("[4] Running AI analysis...");
 
     let ai: any;
-    const aiModelName = providerName === 'groq' ? 'llama-3.3-70b'
-      : providerName === 'gemini' ? 'gemini-1.5-flash'
+    const aiModelName = llmProvider === 'groq' ? 'llama-3.3-70b'
+      : llmProvider === 'gemini' ? 'gemini-1.5-flash'
       : 'gpt-4o-mini';
 
     if (!analysisPrompt) {
@@ -938,7 +1171,7 @@ TRANSCRIPT TO ANALYZE:
 Analyze the above transcript and return ONLY valid JSON matching the required schema.`;
 
       try {
-        ai = await callRegistryLLM(providerName, apiKey, {
+        ai = await callRegistryLLM(llmProvider, llmApiKey, {
           prompt: contextualPrompt,
           context: null,
           isJson: true
@@ -994,6 +1227,8 @@ Analyze the above transcript and return ONLY valid JSON matching the required sc
         detailed_summary: ai.detailed_summary,
         confidence_score: ai.confidence_score || 0.5,
         ai_model: aiModelName,
+        asr_model: asrModelName || null,
+        translation_model: translationModelName || null,
         prompt_version: analysisPrompt?.version?.toString() || '0'
       })
     );
