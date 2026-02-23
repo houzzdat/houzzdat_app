@@ -20,21 +20,40 @@ class _ActionsTabState extends State<ActionsTab>
     with SingleTickerProviderStateMixin {
   final _supabase = Supabase.instance.client;
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
   late TabController _tabController;
+
+  static const _pageSize = 30;
 
   List<Map<String, dynamic>> _actions = [];
   bool _isLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
   String _filterCategory = 'all';
   String _sortBy = 'newest';
   String _searchQuery = '';
   String? _expandedCardId;
 
+  // Bulk selection (#38)
+  bool _isSelectMode = false;
+  final Set<String> _selectedActionIds = {};
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _scrollController.addListener(_onScroll);
     _loadActions();
     _subscribeToChanges();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent * 0.8 &&
+        !_isLoadingMore &&
+        _hasMore) {
+      _loadMoreActions();
+    }
   }
 
   void _subscribeToChanges() {
@@ -55,26 +74,61 @@ class _ActionsTabState extends State<ActionsTab>
   }
 
   Future<void> _loadActions() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _hasMore = true;
+    });
 
     try {
       final data = await _supabase
           .from('action_items')
           .select('*')
           .eq('account_id', widget.accountId)
-          .order('created_at', ascending: false);
+          .order('created_at', ascending: false)
+          .range(0, _pageSize - 1);
 
       if (mounted) {
         setState(() {
           _actions = (data as List)
               .map((e) => Map<String, dynamic>.from(e))
               .toList();
+          _hasMore = _actions.length >= _pageSize;
           _isLoading = false;
         });
       }
     } catch (e) {
       debugPrint('Error loading actions: $e');
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loadMoreActions() async {
+    if (_isLoadingMore || !_hasMore) return;
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final offset = _actions.length;
+      final data = await _supabase
+          .from('action_items')
+          .select('*')
+          .eq('account_id', widget.accountId)
+          .order('created_at', ascending: false)
+          .range(offset, offset + _pageSize - 1);
+
+      final newItems = (data as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+
+      if (mounted) {
+        setState(() {
+          _actions.addAll(newItems);
+          _hasMore = newItems.length >= _pageSize;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading more actions: $e');
+      if (mounted) setState(() => _isLoadingMore = false);
     }
   }
 
@@ -190,6 +244,79 @@ class _ActionsTabState extends State<ActionsTab>
   bool get _hasActiveFilters =>
       _filterCategory != 'all' || _sortBy != 'newest';
 
+  // ─── Bulk Actions (#38) ───────────────────────────────────────
+
+  void _toggleSelectMode() {
+    setState(() {
+      _isSelectMode = !_isSelectMode;
+      if (!_isSelectMode) _selectedActionIds.clear();
+    });
+  }
+
+  void _toggleActionSelection(String id) {
+    setState(() {
+      if (_selectedActionIds.contains(id)) {
+        _selectedActionIds.remove(id);
+      } else {
+        _selectedActionIds.add(id);
+      }
+    });
+  }
+
+  Future<void> _bulkResolve() async {
+    if (_selectedActionIds.isEmpty) return;
+    try {
+      for (final id in _selectedActionIds) {
+        await _supabase.from('action_items').update({
+          'status': 'completed',
+          'updated_at': DateTime.now().toIso8601String(),
+        }).eq('id', id);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${_selectedActionIds.length} actions resolved'),
+            backgroundColor: AppTheme.successGreen,
+          ),
+        );
+      }
+      setState(() {
+        _selectedActionIds.clear();
+        _isSelectMode = false;
+      });
+      _loadActions();
+    } catch (e) {
+      debugPrint('Error bulk resolving: $e');
+    }
+  }
+
+  Future<void> _bulkUpdateStatus(String status) async {
+    if (_selectedActionIds.isEmpty) return;
+    try {
+      for (final id in _selectedActionIds) {
+        await _supabase.from('action_items').update({
+          'status': status,
+          'updated_at': DateTime.now().toIso8601String(),
+        }).eq('id', id);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${_selectedActionIds.length} actions updated to $status'),
+            backgroundColor: AppTheme.successGreen,
+          ),
+        );
+      }
+      setState(() {
+        _selectedActionIds.clear();
+        _isSelectMode = false;
+      });
+      _loadActions();
+    } catch (e) {
+      debugPrint('Error bulk updating: $e');
+    }
+  }
+
   void _showFilterBottomSheet() {
     showModalBottomSheet(
       context: context,
@@ -207,6 +334,31 @@ class _ActionsTabState extends State<ActionsTab>
           Navigator.pop(ctx);
         },
       ),
+    );
+  }
+
+  /// Wrap a card widget with a checkbox when in select mode.
+  Widget _wrapWithSelectMode(Map<String, dynamic> item, Widget cardWidget) {
+    if (!_isSelectMode) return cardWidget;
+
+    final id = item['id']?.toString() ?? '';
+    final isSelected = _selectedActionIds.contains(id);
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 8, top: 16),
+          child: Checkbox(
+            value: isSelected,
+            onChanged: (_) => _toggleActionSelection(id),
+            activeColor: AppTheme.primaryIndigo,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          ),
+        ),
+        Expanded(child: cardWidget),
+      ],
     );
   }
 
@@ -279,6 +431,15 @@ class _ActionsTabState extends State<ActionsTab>
                     ),
                 ],
               ),
+              // Bulk select toggle (#38)
+              IconButton(
+                icon: Icon(
+                  _isSelectMode ? Icons.close : Icons.checklist_rounded,
+                  color: _isSelectMode ? AppTheme.errorRed : AppTheme.primaryIndigo,
+                ),
+                tooltip: _isSelectMode ? 'Cancel Selection' : 'Select Multiple',
+                onPressed: _toggleSelectMode,
+              ),
               // Feed shortcut icon
               IconButton(
                 icon: const Icon(Icons.feed_rounded, color: AppTheme.primaryIndigo),
@@ -322,6 +483,48 @@ class _ActionsTabState extends State<ActionsTab>
                     color: AppTheme.infoBlue,
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        // Bulk action bar (#38)
+        if (_isSelectMode && _selectedActionIds.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.spacingM,
+              vertical: AppTheme.spacingS,
+            ),
+            color: AppTheme.primaryIndigo.withValues(alpha: 0.1),
+            child: Row(
+              children: [
+                Text(
+                  '${_selectedActionIds.length} selected',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.primaryIndigo,
+                    fontSize: 13,
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () => _bulkUpdateStatus('in_progress'),
+                  icon: const Icon(Icons.play_arrow, size: 18),
+                  label: const Text('Start'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.infoBlue,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: _bulkResolve,
+                  icon: const Icon(Icons.check_circle, size: 18),
+                  label: const Text('Resolve'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.successGreen,
+                    visualDensity: VisualDensity.compact,
                   ),
                 ),
               ],
@@ -472,57 +675,102 @@ class _ActionsTabState extends State<ActionsTab>
     // IDs of needs-attention items to avoid duplicates in main list
     final naIds = tabNeedsAttention.map((na) => na['id']).toSet();
 
+    final mainItems = items
+        .where((item) => !naIds.contains(item['id']))
+        .toList();
+
     return RefreshIndicator(
       onRefresh: _loadActions,
-      child: ListView(
+      child: ListView.builder(
+        controller: _scrollController,
         padding: const EdgeInsets.only(
           top: AppTheme.spacingS,
           bottom: AppTheme.spacingXL,
         ),
-        children: [
-          // "Needs Attention" section (only in Open tab)
-          if (tabNeedsAttention.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning_amber, size: 18, color: AppTheme.errorRed),
-                  const SizedBox(width: 6),
-                  Text(
-                    'NEEDS ATTENTION (${tabNeedsAttention.length})',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.errorRed,
-                      letterSpacing: 0.5,
+        itemCount: tabNeedsAttention.length +
+            (tabNeedsAttention.isNotEmpty ? 2 : 0) + // header + divider
+            mainItems.length +
+            (_isLoadingMore && _hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          // "Needs Attention" header
+          if (tabNeedsAttention.isNotEmpty) {
+            if (index == 0) {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber,
+                        size: 18, color: AppTheme.errorRed),
+                    const SizedBox(width: 6),
+                    Text(
+                      'NEEDS ATTENTION (${tabNeedsAttention.length})',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.errorRed,
+                        letterSpacing: 0.5,
+                      ),
                     ),
+                  ],
+                ),
+              );
+            }
+            // Needs-attention items
+            if (index <= tabNeedsAttention.length) {
+              final item = tabNeedsAttention[index - 1];
+              return _wrapWithSelectMode(
+                item,
+                ActionCardWidget(
+                  item: item,
+                  onRefresh: _loadActions,
+                  expandedCardId: _expandedCardId,
+                  onExpandChanged: (id) =>
+                      setState(() => _expandedCardId = id),
+                ),
+              );
+            }
+            // Divider after needs-attention section
+            if (index == tabNeedsAttention.length + 1) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Divider(),
+              );
+            }
+          }
+
+          // Main items offset
+          final mainIndex = tabNeedsAttention.isNotEmpty
+              ? index - tabNeedsAttention.length - 2
+              : index;
+
+          // Loading more indicator at the end
+          if (mainIndex >= mainItems.length) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppTheme.primaryIndigo,
                   ),
-                ],
+                ),
               ),
-            ),
-            ...tabNeedsAttention.map((item) => ActionCardWidget(
-              item: item,
+            );
+          }
+
+          return _wrapWithSelectMode(
+            mainItems[mainIndex],
+            ActionCardWidget(
+              item: mainItems[mainIndex],
               onRefresh: _loadActions,
               expandedCardId: _expandedCardId,
               onExpandChanged: (id) =>
                   setState(() => _expandedCardId = id),
-            )),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Divider(),
             ),
-          ],
-          // Remaining items (excluding needs-attention dupes)
-          ...items
-              .where((item) => !naIds.contains(item['id']))
-              .map((item) => ActionCardWidget(
-                item: item,
-                onRefresh: _loadActions,
-                expandedCardId: _expandedCardId,
-                onExpandChanged: (id) =>
-                    setState(() => _expandedCardId = id),
-              )),
-        ],
+          );
+        },
       ),
     );
   }
@@ -531,6 +779,7 @@ class _ActionsTabState extends State<ActionsTab>
   void dispose() {
     _tabController.dispose();
     _searchController.dispose();
+    _scrollController.dispose();
     _supabase.removeChannel(_supabase.channel('action_items_classic_changes'));
     super.dispose();
   }

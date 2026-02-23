@@ -21,11 +21,13 @@ class RecipientSelectorDialog extends StatefulWidget {
 
 class _RecipientSelectorDialogState extends State<RecipientSelectorDialog> {
   final _supabase = Supabase.instance.client;
+  final _searchController = TextEditingController();
 
   List<Map<String, dynamic>> _teamMembers = [];
   Set<String> _selectedIds = {};
   bool _isLoading = true;
   String? _errorMessage;
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -109,6 +111,78 @@ class _RecipientSelectorDialogState extends State<RecipientSelectorDialog> {
     }
   }
 
+  /// Show confirmation dialog with recipient names before proceeding (#50).
+  void _showConfirmationAndProceed() async {
+    final selectedNames = _teamMembers
+        .where((m) => _selectedIds.contains(m['id']))
+        .map((m) => m['full_name'] as String)
+        .toList();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusXL),
+        ),
+        title: const Text('Confirm Recipients'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Broadcasting to ${selectedNames.length} member${selectedNames.length == 1 ? '' : 's'}:',
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 200),
+              child: SingleChildScrollView(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: selectedNames.map((name) => Chip(
+                    label: Text(name, style: const TextStyle(fontSize: 12)),
+                    backgroundColor: AppTheme.primaryIndigo.withValues(alpha: 0.1),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  )).toList(),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Back to Edit'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.mic, size: 18),
+            label: const Text('Start Recording'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryIndigo,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      Navigator.pop(context, _selectedIds.toList());
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -148,7 +222,39 @@ class _RecipientSelectorDialogState extends State<RecipientSelectorDialog> {
                 color: AppTheme.textSecondary,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
+
+            // Search field (#49)
+            if (!_isLoading && _teamMembers.isNotEmpty)
+              TextField(
+                controller: _searchController,
+                onChanged: (v) => setState(() => _searchQuery = v),
+                decoration: InputDecoration(
+                  hintText: 'Search members...',
+                  prefixIcon: const Icon(Icons.search, size: 20, color: AppTheme.textSecondary),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _searchQuery = '');
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: AppTheme.backgroundGrey,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppTheme.radiusL),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.spacingM,
+                    vertical: AppTheme.spacingS,
+                  ),
+                  isDense: true,
+                ),
+              ),
+            const SizedBox(height: 12),
 
             // Select All / Deselect All buttons
             if (!_isLoading && _teamMembers.isNotEmpty)
@@ -272,10 +378,19 @@ class _RecipientSelectorDialogState extends State<RecipientSelectorDialog> {
                                 ],
                               ),
                             )
-                          : ListView.builder(
-                              itemCount: _teamMembers.length,
+                          : Builder(builder: (context) {
+                              final filteredMembers = _searchQuery.isEmpty
+                                  ? _teamMembers
+                                  : _teamMembers.where((m) {
+                                      final q = _searchQuery.toLowerCase();
+                                      final name = (m['full_name'] as String).toLowerCase();
+                                      final email = (m['email']?.toString() ?? '').toLowerCase();
+                                      return name.contains(q) || email.contains(q);
+                                    }).toList();
+                              return ListView.builder(
+                              itemCount: filteredMembers.length,
                               itemBuilder: (context, index) {
-                                final member = _teamMembers[index];
+                                final member = filteredMembers[index];
                                 final userId = member['id'] as String;
                                 final isSelected = _selectedIds.contains(userId);
                                 final fullName = member['full_name'] as String;
@@ -303,7 +418,8 @@ class _RecipientSelectorDialogState extends State<RecipientSelectorDialog> {
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                                 );
                               },
-                            ),
+                            );
+                            }),
             ),
 
             const Divider(height: 32),
@@ -329,7 +445,7 @@ class _RecipientSelectorDialogState extends State<RecipientSelectorDialog> {
                   child: ElevatedButton(
                     onPressed: _selectedIds.isEmpty
                         ? null
-                        : () => Navigator.pop(context, _selectedIds.toList()),
+                        : () => _showConfirmationAndProceed(),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.primaryIndigo,
                       foregroundColor: Colors.white,

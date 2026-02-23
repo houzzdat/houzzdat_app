@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,15 +11,16 @@ import 'package:houzzdat_app/features/dashboard/tabs/projects_tab.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/team_tab.dart';
 import 'package:houzzdat_app/features/finance/tabs/finance_tab.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/critical_alert_banner.dart';
+import 'package:houzzdat_app/core/widgets/offline_banner.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/custom_bottom_nav.dart';
-import 'package:houzzdat_app/features/dashboard/widgets/logout_dialog.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/recipient_selector_dialog.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/broadcast_voice_dialog.dart';
 import 'package:houzzdat_app/features/reports/screens/reports_screen.dart';
 import 'package:houzzdat_app/features/insights/screens/insights_screen.dart';
-import 'package:houzzdat_app/features/dashboard/widgets/confidence_calibration_widget.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/quick_tag_overlay.dart';
 import 'package:houzzdat_app/features/insights/services/review_queue_service.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/recording_preview_dialog.dart';
+import 'package:houzzdat_app/features/settings/screens/settings_screen.dart';
 
 class ManagerDashboardClassic extends StatefulWidget {
   const ManagerDashboardClassic({super.key});
@@ -38,6 +40,8 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
   bool _isUploading = false;
   bool _quickTagEnabled = true;
   int _reviewBadgeCount = 0;
+  Duration _recordingDuration = Duration.zero;
+  Timer? _recordingTimer;
 
   // Pulsing animation for FAB
   late AnimationController _pulseController;
@@ -62,6 +66,7 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
   @override
   void dispose() {
     _pulseController.dispose();
+    _recordingTimer?.cancel();
     _companyService.removeListener(_onCompanyChanged);
     super.dispose();
   }
@@ -131,19 +136,6 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
     }
   }
 
-  Future<void> _handleLogout() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const LogoutDialog(),
-    );
-
-    if (confirm == true) {
-      await CompanyContextService().reset();
-      await _supabase.auth.signOut();
-    }
-  }
-
   void _handleSwitchCompany() {
     // Navigate back to AuthWrapper which will show the company selector
     CompanyContextService().reset().then((_) {
@@ -151,59 +143,6 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
         Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
       }
     });
-  }
-
-  /// Show settings bottom sheet with AI calibration widget.
-  void _showSettingsSheet(String accountId) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        minChildSize: 0.4,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) => Column(
-          children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 10),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Row(
-                children: [
-                  const Text('AI SETTINGS',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: SingleChildScrollView(
-                controller: scrollController,
-                padding: const EdgeInsets.all(16),
-                child: ConfidenceCalibrationWidget(accountId: accountId),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   /// Single tap on central mic → project note (most common action).
@@ -228,17 +167,40 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
     await _handleBroadcast();
   }
 
-  /// Handles recording a project note (existing behavior)
+  /// Handles recording a project note with preview before submit.
   Future<void> _handleProjectNote() async {
     if (!_isRecording) {
       await _recorderService.startRecording();
-      setState(() => _isRecording = true);
+      setState(() {
+        _isRecording = true;
+        _recordingDuration = Duration.zero;
+      });
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (mounted) {
+          setState(() => _recordingDuration = Duration(seconds: timer.tick));
+        }
+      });
     } else {
+      _recordingTimer?.cancel();
       setState(() => _isRecording = false);
       final bytes = await _recorderService.stopRecording();
 
-      if (bytes != null) {
-        // Get current user's project
+      if (bytes != null && mounted) {
+        // Show preview dialog before uploading
+        final shouldSubmit = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => RecordingPreviewDialog(
+            audioBytes: bytes,
+            recordingDuration: _recordingDuration,
+            contextLabel: 'Project voice note',
+          ),
+        );
+
+        if (shouldSubmit != true || !mounted) return;
+
+        // User confirmed — proceed with upload
+        setState(() => _isUploading = true);
         final user = _supabase.auth.currentUser;
         if (user != null) {
           try {
@@ -257,35 +219,43 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
                 accountId: _accountId!,
               );
 
-              if (mounted && result != null) {
-                final voiceNoteId = result['id']!;
+              if (mounted) {
+                setState(() => _isUploading = false);
+                if (result != null) {
+                  final voiceNoteId = result['id']!;
 
-                void showSuccessSnackbar() {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Voice note submitted'),
-                        backgroundColor: AppTheme.successGreen,
-                      ),
+                  void showSuccessSnackbar() {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Voice note submitted'),
+                          backgroundColor: AppTheme.successGreen,
+                        ),
+                      );
+                    }
+                  }
+
+                  if (_quickTagEnabled) {
+                    QuickTagOverlay.show(
+                      context,
+                      voiceNoteId: voiceNoteId,
+                      quickTagEnabled: true,
+                      onDismissed: showSuccessSnackbar,
                     );
+                  } else {
+                    showSuccessSnackbar();
                   }
                 }
-
-                if (_quickTagEnabled) {
-                  QuickTagOverlay.show(
-                    context,
-                    voiceNoteId: voiceNoteId,
-                    quickTagEnabled: true,
-                    onDismissed: showSuccessSnackbar,
-                  );
-                } else {
-                  showSuccessSnackbar();
-                }
               }
+            } else {
+              if (mounted) setState(() => _isUploading = false);
             }
           } catch (e) {
             debugPrint('Error uploading voice note: $e');
+            if (mounted) setState(() => _isUploading = false);
           }
+        } else {
+          if (mounted) setState(() => _isUploading = false);
         }
       }
     }
@@ -435,11 +405,6 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
             },
             tooltip: 'Reports',
           ),
-          IconButton(
-            icon: const Icon(Icons.tune),
-            onPressed: () => _showSettingsSheet(accountId),
-            tooltip: 'Settings',
-          ),
           if (_companyService.hasMultipleCompanies)
             IconButton(
               icon: const Icon(Icons.swap_horiz),
@@ -447,14 +412,24 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
               tooltip: 'Switch Company',
             ),
           IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _handleLogout,
-            tooltip: 'Logout',
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SettingsScreen(
+                    role: 'manager',
+                    accountId: accountId,
+                  ),
+                ),
+              );
+            },
+            tooltip: 'Settings',
           ),
         ],
       ),
       body: Column(
         children: [
+          const OfflineBanner(),
           CriticalAlertBanner(
             accountId: accountId,
             onViewActions: () {
@@ -475,7 +450,14 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
         builder: (context, child) {
           return Transform.scale(
             scale: _isRecording ? 1.0 : _pulseAnimation.value,
-            child: GestureDetector(
+            child: Semantics(
+              label: _isRecording
+                  ? 'Stop recording voice note'
+                  : _isUploading
+                      ? 'Uploading voice note'
+                      : 'Record voice note. Long press to broadcast.',
+              button: true,
+              child: GestureDetector(
               onTap: _isUploading ? null : _handleCentralMicTap,
               onLongPress: _isUploading ? null : _handleCentralMicLongPress,
               child: SizedBox(
@@ -513,6 +495,7 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
                         ),
                 ),
               ),
+            ),
             ),
           );
         },

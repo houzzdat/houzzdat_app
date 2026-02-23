@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/services/company_context_service.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+import 'package:houzzdat_app/features/auth/screens/auth_wrapper.dart';
 
 /// Screen shown when a user belongs to multiple companies.
 /// Allows selecting which company to work in for this session.
@@ -33,7 +34,10 @@ class _CompanySelectorScreenState extends State<CompanySelectorScreen> {
       if (mounted) {
         // Force rebuild by triggering a state change in the auth stream
         // The AuthWrapper's FutureBuilder will re-resolve with the saved selection
-        Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthWrapper()),
+          (_) => false,
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -49,8 +53,34 @@ class _CompanySelectorScreenState extends State<CompanySelectorScreen> {
   }
 
   Future<void> _handleLogout() async {
-    await _companyService.reset();
-    await Supabase.instance.client.auth.signOut();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.errorRed,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _companyService.reset();
+      if (mounted) {
+        await Supabase.instance.client.auth.signOut();
+      }
+    }
   }
 
   Color _getRoleColor(String role) {

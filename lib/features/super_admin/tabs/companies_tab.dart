@@ -46,21 +46,20 @@ class CompaniesTabState extends State<CompaniesTab> {
 
       final companies = List<Map<String, dynamic>>.from(result);
 
-      // Fetch user counts for each company
+      // Fetch all user-account associations in a single query instead of N+1
       final userCounts = <String, int>{};
-      for (final company in companies) {
-        final accountId = company['id']?.toString();
-        if (accountId != null) {
-          try {
-            final users = await _supabase
-                .from('users')
-                .select('id')
-                .eq('account_id', accountId);
-            userCounts[accountId] = (users as List).length;
-          } catch (e) {
-            userCounts[accountId] = 0;
+      try {
+        final allUsers = await _supabase
+            .from('users')
+            .select('account_id');
+        for (final user in (allUsers as List)) {
+          final accountId = user['account_id']?.toString();
+          if (accountId != null) {
+            userCounts[accountId] = (userCounts[accountId] ?? 0) + 1;
           }
         }
+      } catch (e) {
+        debugPrint('Error fetching user counts: $e');
       }
 
       if (mounted) {

@@ -150,4 +150,80 @@ class AppTheme {
       ),
     );
   }
+
+  // ========== DARK THEME (#94) ==========
+  static const Color _darkBackground = Color(0xFF121212);
+  static const Color _darkSurface = Color(0xFF1E1E1E);
+  static const Color _darkCard = Color(0xFF2C2C2C);
+
+  static ThemeData get darkTheme {
+    return ThemeData(
+      brightness: Brightness.dark,
+      primaryColor: primaryIndigo,
+      scaffoldBackgroundColor: _darkBackground,
+      colorScheme: const ColorScheme.dark(
+        primary: Color(0xFF5C6BC0), // lighter indigo for dark mode
+        secondary: accentAmber,
+        error: Color(0xFFEF5350),
+        surface: _darkSurface,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: _darkSurface,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        centerTitle: false,
+      ),
+      cardTheme: CardThemeData(
+        color: _darkCard,
+        elevation: elevationLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radiusL),
+        ),
+        margin: const EdgeInsets.symmetric(
+          horizontal: spacingM,
+          vertical: spacingS,
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: accentAmber,
+          foregroundColor: Colors.black,
+          elevation: elevationLow,
+          padding: const EdgeInsets.symmetric(
+            horizontal: spacingL,
+            vertical: spacingM,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radiusL),
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(radiusM),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: spacingM,
+          vertical: spacingM,
+        ),
+        fillColor: _darkSurface,
+      ),
+      dividerTheme: DividerThemeData(
+        color: Colors.grey.shade800,
+        thickness: 1,
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radiusM),
+        ),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: _darkCard,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(radiusXL)),
+        ),
+      ),
+    );
+  }
 }

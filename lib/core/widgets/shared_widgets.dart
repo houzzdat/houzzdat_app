@@ -309,6 +309,71 @@ class ShimmerLoadingList extends StatelessWidget {
   }
 }
 
+/// Consistent status badge with colored dot + text label (#98).
+/// Use everywhere: company cards, user rows, action cards, reports.
+class StatusBadge extends StatelessWidget {
+  final String status;
+  final Color? overrideColor;
+
+  const StatusBadge({
+    super.key,
+    required this.status,
+    this.overrideColor,
+  });
+
+  Color _colorForStatus(String s) {
+    switch (s.toLowerCase()) {
+      case 'active':
+      case 'completed':
+      case 'confirmed':
+      case 'approved':
+        return AppTheme.successGreen;
+      case 'pending':
+      case 'draft':
+      case 'processing':
+        return AppTheme.warningOrange;
+      case 'inactive':
+      case 'deactivated':
+      case 'removed':
+      case 'rejected':
+        return AppTheme.errorRed;
+      case 'in_progress':
+      case 'verifying':
+      case 'submitted':
+        return AppTheme.infoBlue;
+      default:
+        return AppTheme.textSecondary;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = overrideColor ?? _colorForStatus(status);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          status.replaceAll('_', ' ').toUpperCase(),
+          style: AppTheme.caption.copyWith(
+            color: color,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Error widget
 class ErrorStateWidget extends StatelessWidget {
   final String message;

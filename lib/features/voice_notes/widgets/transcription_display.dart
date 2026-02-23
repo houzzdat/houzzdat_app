@@ -1,7 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
-import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 
 /// Component for displaying and managing transcriptions with ONE-TIME edit limit
 /// FIXED: Compatible with existing EditableTranscriptionBox interface
@@ -312,20 +311,64 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
     );
   }
 
-  void _showEditDialog(String currentText, bool isNative, String label) {
+  void _showEditDialog(String currentText, bool isNative, String label) async {
+    // Warn user about one-edit limit before opening the editor
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusXL),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber, color: AppTheme.warningOrange, size: 24),
+            const SizedBox(width: 8),
+            const Text('One-Time Edit'),
+          ],
+        ),
+        content: const Text(
+          'You can edit this transcript only once. After saving, it will be permanently locked and no further changes will be allowed.\n\nDo you want to continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.warningOrange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Edit'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
     final controller = TextEditingController(text: currentText);
 
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Edit $label'),
-        content: TextField(
-          controller: controller,
-          maxLines: 8,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            hintText: 'Enter transcription...',
-          ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              maxLines: 8,
+              maxLength: 2000,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Enter transcription...',
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -347,32 +390,87 @@ class _TranscriptionDisplayState extends State<TranscriptionDisplay> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final hasTranscription = widget.transcription != null && 
-                             widget.transcription!.isNotEmpty;
+  /// Build a multi-stage progress indicator for transcription processing.
+  Widget _buildProcessingIndicator(String status) {
+    const stages = ['processing', 'transcribing', 'translated', 'analyzing', 'completed'];
+    final statusLabels = {
+      'processing': 'Uploading audio...',
+      'transcribing': 'Transcribing speech...',
+      'translated': 'Translating...',
+      'analyzing': 'Analyzing content...',
+      'completed': 'Done',
+    };
 
-    if (!hasTranscription) {
-      if (widget.status == 'processing') {
-        return Padding(
-          padding: const EdgeInsets.only(top: AppTheme.spacingM),
-          child: Row(
+    final currentIndex = stages.indexOf(status).clamp(0, stages.length - 1);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: AppTheme.spacingM),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
               const SizedBox(
-                width: 12,
-                height: 12,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryIndigo),
               ),
               const SizedBox(width: AppTheme.spacingS),
               Text(
-                'Processing transcription...',
+                statusLabels[status] ?? 'Processing...',
                 style: AppTheme.bodySmall.copyWith(
                   fontStyle: FontStyle.italic,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
-        );
+          const SizedBox(height: AppTheme.spacingS),
+          // Step dots
+          Row(
+            children: List.generate(4, (i) {
+              final isActive = i <= currentIndex;
+              final isCurrent = i == currentIndex;
+              return Expanded(
+                child: Container(
+                  height: 4,
+                  margin: EdgeInsets.only(right: i < 3 ? 4 : 0),
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? (isCurrent ? AppTheme.primaryIndigo : AppTheme.successGreen)
+                        : AppTheme.textSecondary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Transcribe', style: AppTheme.caption.copyWith(fontSize: 9)),
+              Text('Translate', style: AppTheme.caption.copyWith(fontSize: 9)),
+              Text('Analyze', style: AppTheme.caption.copyWith(fontSize: 9)),
+              Text('Done', style: AppTheme.caption.copyWith(fontSize: 9)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasTranscription = widget.transcription != null &&
+                             widget.transcription!.isNotEmpty;
+
+    if (!hasTranscription) {
+      if (widget.status == 'processing' ||
+          widget.status == 'transcribing' ||
+          widget.status == 'translated' ||
+          widget.status == 'analyzing') {
+        return _buildProcessingIndicator(widget.status);
       }
       return const SizedBox.shrink();
     }

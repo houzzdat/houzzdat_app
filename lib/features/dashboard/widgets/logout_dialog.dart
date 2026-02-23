@@ -6,11 +6,13 @@ class LogoutDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isDark ? const Color(0xFF2C2C2C) : Colors.white,
           borderRadius: BorderRadius.circular(AppTheme.radiusXL),
         ),
         padding: const EdgeInsets.all(AppTheme.spacingXL),
@@ -22,7 +24,7 @@ class LogoutDialog extends StatelessWidget {
               width: 80,
               height: 80,
               decoration: BoxDecoration(
-                color: AppTheme.errorRed.withValues(alpha:0.1),
+                color: AppTheme.errorRed.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -31,30 +33,30 @@ class LogoutDialog extends StatelessWidget {
                 color: AppTheme.errorRed,
               ),
             ),
-            
+
             const SizedBox(height: AppTheme.spacingL),
-            
+
             // Title
             Text(
               'Log Out?',
               style: AppTheme.headingLarge.copyWith(
-                color: AppTheme.textPrimary,
+                color: isDark ? Colors.white : AppTheme.textPrimary,
               ),
             ),
-            
+
             const SizedBox(height: AppTheme.spacingM),
-            
+
             // Warning Message
             Text(
               'Any unsaved voice notes will be lost.',
               textAlign: TextAlign.center,
               style: AppTheme.bodyMedium.copyWith(
-                color: AppTheme.textSecondary,
+                color: isDark ? Colors.grey.shade400 : AppTheme.textSecondary,
               ),
             ),
-            
+
             const SizedBox(height: AppTheme.spacingXL),
-            
+
             // Action Buttons
             Row(
               children: [
@@ -66,7 +68,7 @@ class LogoutDialog extends StatelessWidget {
                         vertical: AppTheme.spacingM,
                       ),
                       side: BorderSide(
-                        color: Colors.grey.shade300,
+                        color: isDark ? Colors.grey.shade700 : Colors.grey.shade300,
                       ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(AppTheme.radiusM),
@@ -75,7 +77,7 @@ class LogoutDialog extends StatelessWidget {
                     child: Text(
                       'CANCEL',
                       style: AppTheme.bodyMedium.copyWith(
-                        color: AppTheme.textSecondary,
+                        color: isDark ? Colors.grey.shade400 : AppTheme.textSecondary,
                         fontWeight: FontWeight.bold,
                       ),
                     ),

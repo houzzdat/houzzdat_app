@@ -162,10 +162,15 @@ class _AddPaymentSheetState extends State<AddPaymentSheet> {
                 controller: _amountController,
                 decoration: _inputDecoration('Amount (\u20B9) *'),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                  _SingleDecimalFormatter(),
+                ],
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) return 'Required';
-                  if (double.tryParse(v.trim()) == null) return 'Invalid amount';
+                  final amount = double.tryParse(v.trim());
+                  if (amount == null) return 'Invalid amount';
+                  if (amount <= 0) return 'Amount must be greater than zero';
                   return null;
                 },
               ),
@@ -302,5 +307,18 @@ class _AddPaymentSheetState extends State<AddPaymentSheet> {
         vertical: AppTheme.spacingS,
       ),
     );
+  }
+}
+
+/// Prevents multiple decimal points in numeric input.
+class _SingleDecimalFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if ('.'.allMatches(text).length > 1) return oldValue;
+    return newValue;
   }
 }

@@ -10,6 +10,7 @@ import 'package:houzzdat_app/features/worker/tabs/daily_tasks_tab.dart';
 import 'package:houzzdat_app/features/worker/tabs/attendance_tab.dart';
 import 'package:houzzdat_app/features/worker/tabs/progress_tab.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/quick_tag_overlay.dart';
+import 'package:houzzdat_app/features/settings/screens/settings_screen.dart';
 
 /// Worker Home Screen with persistent recording FAB visible on all tabs.
 /// 4-tab BottomNavigationBar: My Logs, Tasks, Attendance, Progress.
@@ -150,11 +151,6 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
     } catch (e) {
       debugPrint('Error resolving quick-tag default: $e');
     }
-  }
-
-  Future<void> _handleLogout() async {
-    await CompanyContextService().reset();
-    await _supabase.auth.signOut();
   }
 
   /// Persistent recording handler — accessible from any tab via FAB.
@@ -359,9 +355,15 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(LucideIcons.logOut),
-            onPressed: _handleLogout,
-            tooltip: 'Logout',
+            icon: const Icon(LucideIcons.settings),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const SettingsScreen(role: 'worker'),
+                ),
+              );
+            },
+            tooltip: 'Settings',
           ),
         ],
       ),

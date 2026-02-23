@@ -4,6 +4,7 @@ import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_card.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
+import 'package:houzzdat_app/features/dashboard/widgets/reply_voice_dialog.dart';
 import 'dart:typed_data';
 
 class FeedTab extends StatefulWidget {
@@ -24,10 +25,6 @@ class _FeedTabState extends State<FeedTab> {
   String? _selectedUserId;
   String _searchQuery = '';
   String _sortBy = 'newest';
-
-  // Reply State
-  bool _isReplying = false;
-  String? _replyToId;
 
   // Acknowledged IDs (local tracking for instant UI feedback)
   final Set<String> _acknowledgedIds = {};
@@ -154,27 +151,63 @@ class _FeedTabState extends State<FeedTab> {
   }
 
   void _handleReply(Map<String, dynamic> note) async {
-    if (!_isReplying) {
-      await _recorderService.startRecording();
-      setState(() {
-        _isReplying = true;
-        _replyToId = note['id'];
-      });
-    } else {
-      setState(() => _isReplying = false);
-      Uint8List? bytes = await _recorderService.stopRecording();
-      if (bytes != null) {
-        await _recorderService.uploadAudio(
-          bytes: bytes,
-          projectId: note['project_id'],
-          userId: _supabase.auth.currentUser!.id,
-          accountId: widget.accountId!,
-          parentId: note['id'],
-          recipientId: note['user_id'],
+    final senderName = _userEmails[note['user_id']?.toString()] ?? 'Unknown';
+    final projectName = _projectNames[note['project_id']?.toString()];
+    final transcript = note['transcript_final']?.toString() ??
+        note['transcription']?.toString();
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => ReplyVoiceDialog(
+        senderName: senderName,
+        transcriptPreview: transcript,
+        projectName: projectName,
+      ),
+    );
+
+    if (result == null || !mounted) return;
+
+    // Handle voice reply
+    if (result.containsKey('audioBytes')) {
+      final bytes = result['audioBytes'] as Uint8List;
+      await _recorderService.uploadAudio(
+        bytes: bytes,
+        projectId: note['project_id'],
+        userId: _supabase.auth.currentUser!.id,
+        accountId: widget.accountId!,
+        parentId: note['id'],
+        recipientId: note['user_id'],
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Voice reply sent'),
+            backgroundColor: AppTheme.successGreen,
+          ),
         );
-        setState(() {
-          _replyToId = null;
+      }
+    }
+    // Handle text reply (store as a project event)
+    else if (result.containsKey('textReply')) {
+      try {
+        await _supabase.from('voice_note_project_events').insert({
+          'voice_note_id': note['id'],
+          'project_id': note['project_id'],
+          'account_id': widget.accountId,
+          'user_id': _supabase.auth.currentUser?.id,
+          'event_type': 'text_reply',
+          'content': result['textReply'],
         });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Text reply sent'),
+              backgroundColor: AppTheme.successGreen,
+            ),
+          );
+        }
+      } catch (e) {
+        debugPrint('Error sending text reply: $e');
       }
     }
   }
@@ -677,43 +710,18 @@ class _FeedTabState extends State<FeedTab> {
                   itemCount: filteredNotes.length,
                   itemBuilder: (context, i) {
                     final note = filteredNotes[i];
-                    final isReplying = _replyToId == note['id'];
 
-                    return Column(
-                      children: [
-                        VoiceNoteCard(
-                          note: note,
-                          isReplying: isReplying,
-                          onReply: () => _handleReply(note),
-                          senderName: _userEmails[note['user_id']?.toString()],
-                          projectName: _projectNames[note['project_id']?.toString()],
-                          onAcknowledge: () => _handleAcknowledge(note),
-                          onAddNote: () => _handleAddNoteToVoiceNote(note),
-                          onCreateAction: () => _handleCreateActionFromNote(note),
-                          isAcknowledged: _acknowledgedIds.contains(note['id']?.toString()) ||
-                              note['acknowledged_by'] != null,
-                        ),
-                        if (isReplying)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.reply, size: 20),
-                                const SizedBox(width: 8),
-                                const Expanded(
-                                  child: Text(
-                                    'Recording reply...',
-                                    style: TextStyle(fontStyle: FontStyle.italic),
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.stop, color: Colors.red),
-                                  onPressed: () => _handleReply(note),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
+                    return VoiceNoteCard(
+                      note: note,
+                      isReplying: false,
+                      onReply: () => _handleReply(note),
+                      senderName: _userEmails[note['user_id']?.toString()],
+                      projectName: _projectNames[note['project_id']?.toString()],
+                      onAcknowledge: () => _handleAcknowledge(note),
+                      onAddNote: () => _handleAddNoteToVoiceNote(note),
+                      onCreateAction: () => _handleCreateActionFromNote(note),
+                      isAcknowledged: _acknowledgedIds.contains(note['id']?.toString()) ||
+                          note['acknowledged_by'] != null,
                     );
                   },
                 ),

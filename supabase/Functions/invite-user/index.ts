@@ -282,7 +282,8 @@ Deno.serve(async (req) => {
       email_confirm: true,
       user_metadata: {
         role: role,
-        account_id: account_id
+        account_id: account_id,
+        must_change_password: true,
       }
     })
 

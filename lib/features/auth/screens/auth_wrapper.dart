@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/services/company_context_service.dart';
 import 'package:houzzdat_app/features/auth/screens/login_screen.dart';
+import 'package:houzzdat_app/features/auth/screens/set_password_screen.dart';
 import 'package:houzzdat_app/features/auth/screens/super_admin_screen.dart';
 import 'package:houzzdat_app/features/auth/screens/company_selector_screen.dart';
 import 'package:houzzdat_app/features/dashboard/screens/manager_dashboard.dart';
@@ -24,41 +26,48 @@ class AuthWrapper extends StatelessWidget {
           return const LoginScreen();
         }
 
+        // First login: user has temp password and must set their own
+        final mustChangePassword =
+            session.user.userMetadata?['must_change_password'] == true;
+        if (mustChangePassword) {
+          return const SetPasswordScreen(
+            purpose: SetPasswordPurpose.firstLogin,
+          );
+        }
+
         // If there is a session, resolve user context
         return FutureBuilder<_AuthResult>(
           future: _resolveUserContext(session.user.id),
           builder: (context, resultSnapshot) {
             if (resultSnapshot.connectionState == ConnectionState.waiting) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
-
-            if (resultSnapshot.hasError || !resultSnapshot.hasData) {
               return Scaffold(
+                backgroundColor: AppTheme.backgroundGrey,
                 body: Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                      const SizedBox(height: 16),
+                      const CircularProgressIndicator(color: AppTheme.primaryIndigo),
+                      const SizedBox(height: AppTheme.spacingL),
                       Text(
-                        'Error loading account',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        resultSnapshot.error?.toString() ?? 'Unknown error',
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: () => Supabase.instance.client.auth.signOut(),
-                        child: const Text('Sign Out'),
+                        'Setting up your workspace...',
+                        style: AppTheme.bodyMedium.copyWith(
+                          color: AppTheme.textSecondary,
+                        ),
                       ),
                     ],
                   ),
                 ),
+              );
+            }
+
+            if (resultSnapshot.hasError || !resultSnapshot.hasData) {
+              return _buildErrorScreen(
+                context,
+                error: resultSnapshot.error,
+                onRetry: () {
+                  // Force the StreamBuilder to rebuild, which re-triggers FutureBuilder
+                  (context as Element).markNeedsBuild();
+                },
               );
             }
 
@@ -73,27 +82,45 @@ class AuthWrapper extends StatelessWidget {
                 return _buildDashboard(result.role ?? 'worker');
               case _AuthResultType.noCompanies:
                 return Scaffold(
+                  backgroundColor: AppTheme.backgroundGrey,
                   body: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.business_outlined, size: 48, color: Colors.grey),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No active companies',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'You are not associated with any active company.\nContact your administrator.',
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 24),
-                        ElevatedButton(
-                          onPressed: () => Supabase.instance.client.auth.signOut(),
-                          child: const Text('Sign Out'),
-                        ),
-                      ],
+                    child: Padding(
+                      padding: const EdgeInsets.all(AppTheme.spacingL),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.business_outlined, size: 48, color: AppTheme.textSecondary.withValues(alpha: 0.5)),
+                          const SizedBox(height: AppTheme.spacingM),
+                          Text(
+                            'No Active Companies',
+                            style: AppTheme.headingMedium,
+                          ),
+                          const SizedBox(height: AppTheme.spacingS),
+                          Text(
+                            'Your account is not linked to any active company.\nAsk your company administrator to add you.',
+                            textAlign: TextAlign.center,
+                            style: AppTheme.bodyMedium.copyWith(
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: AppTheme.spacingXL),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              (context as Element).markNeedsBuild();
+                            },
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Check Again'),
+                          ),
+                          const SizedBox(height: AppTheme.spacingM),
+                          TextButton(
+                            onPressed: () => Supabase.instance.client.auth.signOut(),
+                            child: Text(
+                              'Sign Out',
+                              style: TextStyle(color: AppTheme.textSecondary),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -101,6 +128,80 @@ class AuthWrapper extends StatelessWidget {
           },
         );
       },
+    );
+  }
+
+  Widget _buildErrorScreen(BuildContext context, {Object? error, VoidCallback? onRetry}) {
+    return Scaffold(
+      backgroundColor: AppTheme.backgroundGrey,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppTheme.spacingL),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.cloud_off, size: 48, color: AppTheme.errorRed),
+              const SizedBox(height: AppTheme.spacingM),
+              Text(
+                'Something went wrong',
+                style: AppTheme.headingMedium,
+              ),
+              const SizedBox(height: AppTheme.spacingS),
+              Text(
+                'We couldn\'t load your account. Please try again.',
+                textAlign: TextAlign.center,
+                style: AppTheme.bodyMedium.copyWith(
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              if (error != null) ...[
+                const SizedBox(height: AppTheme.spacingM),
+                Theme(
+                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    title: Text(
+                      'Show technical details',
+                      style: AppTheme.bodySmall.copyWith(color: AppTheme.textSecondary),
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacingM),
+                        child: Text(
+                          error.toString(),
+                          style: AppTheme.bodySmall.copyWith(
+                            color: AppTheme.textSecondary,
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: AppTheme.spacingXL),
+              ElevatedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try Again'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryIndigo,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                ),
+              ),
+              const SizedBox(height: AppTheme.spacingM),
+              TextButton(
+                onPressed: () => Supabase.instance.client.auth.signOut(),
+                child: Text(
+                  'Sign Out',
+                  style: TextStyle(color: AppTheme.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

@@ -9,6 +9,7 @@ import 'package:houzzdat_app/features/owner/tabs/owner_approvals_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_messages_tab.dart';
 import 'package:houzzdat_app/features/owner/tabs/owner_reports_tab.dart';
 import 'package:houzzdat_app/features/insights/screens/insights_screen.dart';
+import 'package:houzzdat_app/features/settings/screens/settings_screen.dart';
 
 class OwnerDashboard extends StatefulWidget {
   const OwnerDashboard({super.key});
@@ -176,12 +177,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
     }
   }
 
-  Future<void> _handleLogout() async {
-    _notifSubscription?.cancel();
-    await CompanyContextService().reset();
-    await _supabase.auth.signOut();
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_accountId == null || _ownerId == null) {
@@ -224,9 +219,18 @@ class _OwnerDashboardState extends State<OwnerDashboard> {
               tooltip: 'Insights',
             ),
           IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _handleLogout,
-            tooltip: 'Logout',
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SettingsScreen(
+                    role: 'owner',
+                    accountId: _accountId,
+                  ),
+                ),
+              );
+            },
+            tooltip: 'Settings',
           ),
         ],
       ),
