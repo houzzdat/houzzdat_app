@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
@@ -153,7 +154,8 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
       if (dueDateStr == null || dueDateStr.isEmpty) return false;
       try {
         return DateTime.parse(dueDateStr).isBefore(now);
-      } catch (_) {
+      } catch (e) {
+        debugPrint('Error parsing invoice due date: $e');
         return false;
       }
     }).fold<double>(0, (sum, inv) => sum + ((inv['amount'] as num?)?.toDouble() ?? 0));
@@ -248,7 +250,8 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
   Future<void> _checkAndUpdateInvoicePaidStatus(String invoiceId) async {
     try {
       final invoice =
-          await _supabase.from('invoices').select('amount').eq('id', invoiceId).single();
+          await _supabase.from('invoices').select('amount').eq('id', invoiceId).maybeSingle(); // UX-audit CI-01
+      if (invoice == null) return;
       final payments = await _supabase
           .from('payments')
           .select('amount')
@@ -273,6 +276,7 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
   }
 
   Future<void> _handleApproveInvoice(Map<String, dynamic> invoice) async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: tactile feedback on approve
     try {
       await _supabase.from('invoices').update({
         'status': 'approved',
@@ -295,6 +299,7 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
   }
 
   Future<void> _handleRejectInvoice(Map<String, dynamic> invoice) async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: tactile feedback on reject
     final reason = await _showReasonDialog('Reject Invoice', 'Reason for rejection');
     if (reason == null) return;
 
@@ -374,7 +379,7 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
     super.build(context);
 
     if (_isLoading) {
-      return const LoadingWidget(message: 'Loading finances...');
+      return const ShimmerLoadingList(itemCount: 4, itemHeight: 120); // UX-audit #4: shimmer instead of spinner
     }
 
     return Stack(
@@ -395,7 +400,7 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
                 horizontal: AppTheme.spacingM,
                 vertical: AppTheme.spacingS,
               ),
-              color: Colors.white,
+              color: Theme.of(context).cardColor,
               child: Column(
                 children: [
                   // View toggle
@@ -465,7 +470,7 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
                 ],
               ),
             ),
-            const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+            const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
 
             // Content
             Expanded(
@@ -494,7 +499,6 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
   void _showAddOptions() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXL)),
       ),
@@ -530,10 +534,15 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
   Widget _buildInvoiceList() {
     final invoices = _filteredInvoices;
     if (invoices.isEmpty) {
-      return const EmptyStateWidget(
+      return EmptyStateWidget( // UX-audit #10: actionable empty state
         icon: Icons.receipt_long_outlined,
         title: 'No invoices yet',
-        subtitle: 'Tap + to create your first invoice',
+        subtitle: 'Create your first invoice to track expenses',
+        action: ActionButton(
+          label: 'Create Invoice',
+          icon: Icons.add,
+          onPressed: _handleCreateInvoice,
+        ),
       );
     }
 
@@ -574,10 +583,15 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
   Widget _buildPaymentList() {
     final payments = _filteredPayments;
     if (payments.isEmpty) {
-      return const EmptyStateWidget(
+      return EmptyStateWidget( // UX-audit #10: actionable empty state
         icon: Icons.payment_outlined,
         title: 'No payments yet',
-        subtitle: 'Tap + to record a payment',
+        subtitle: 'Record your first payment to track cash flow',
+        action: ActionButton(
+          label: 'Record Payment',
+          icon: Icons.add,
+          onPressed: () => _handleAddPayment(),
+        ),
       );
     }
 
@@ -586,6 +600,7 @@ class _SiteFinancesSubtabState extends State<SiteFinancesSubtab>
         top: AppTheme.spacingS,
         bottom: 80,
       ),
+      itemExtent: 120, // UX-audit #6: fixed height for scroll performance
       itemCount: payments.length,
       itemBuilder: (context, i) => PaymentCard(payment: payments[i]),
     );

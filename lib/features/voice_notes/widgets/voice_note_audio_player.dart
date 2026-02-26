@@ -208,8 +208,9 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
           IconButton(
             icon: Icon(
               _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-              size: 40,
+              size: 48, // UX-audit HH-04: was 40 — below 48dp field minimum
             ),
+            iconSize: 48,
             color: AppTheme.primaryIndigo,
             onPressed: _togglePlayback,
             tooltip: _isPlaying ? 'Pause' : 'Play',
@@ -219,9 +220,9 @@ class _VoiceNoteAudioPlayerState extends State<VoiceNoteAudioPlayer> {
               children: [
                 SliderTheme(
                   data: SliderTheme.of(context).copyWith(
-                    trackHeight: 2,
-                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                    trackHeight: 6, // UX-audit HH-02: was 2 — too thin for field
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 14), // was 6 — impossible with gloves
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 24), // was 12
                     activeTrackColor: AppTheme.primaryIndigo,
                     inactiveTrackColor: AppTheme.textSecondary.withValues(alpha: 0.3),
                     thumbColor: AppTheme.primaryIndigo,

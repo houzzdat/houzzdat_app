@@ -116,7 +116,7 @@ class _ReportEditorWidgetState extends State<ReportEditorWidget> {
             horizontal: AppTheme.spacingM,
             vertical: AppTheme.spacingXS,
           ),
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: Row(
             children: [
               // Edit/Preview toggle
@@ -214,7 +214,7 @@ class _ReportEditorWidgetState extends State<ReportEditorWidget> {
             ],
           ),
         ),
-        const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
 
         // Content area
         Expanded(

@@ -5,6 +5,8 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 import 'package:houzzdat_app/core/services/geofence_service.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_audio_player.dart';
+import 'package:houzzdat_app/core/theme/app_theme.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 
 enum AttendanceStatus { checkedOut, checkedIn }
 enum ReportType { voice, text }
@@ -27,7 +29,9 @@ class AttendanceTab extends StatefulWidget {
   State<AttendanceTab> createState() => _AttendanceTabState();
 }
 
-class _AttendanceTabState extends State<AttendanceTab> {
+class _AttendanceTabState extends State<AttendanceTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true; // UX-audit #3: preserve tab state
   final _supabase = Supabase.instance.client;
   final _recorderService = AudioRecorderService();
   final _geofenceService = GeofenceService();
@@ -314,10 +318,9 @@ class _AttendanceTabState extends State<AttendanceTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // UX-audit #3: required by AutomaticKeepAliveClientMixin
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFF1A237E)),
-      );
+      return const ShimmerLoadingList(); // UX-audit #4: shimmer instead of spinner
     }
 
     return RefreshIndicator(
@@ -382,7 +385,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
               child: Icon(
                 isCheckedIn ? Icons.check_circle : LucideIcons.logIn,
                 size: 48,
-                color: isCheckedIn ? Colors.green : const Color(0xFF1A237E),
+                color: isCheckedIn ? Colors.green : AppTheme.primaryIndigo,
               ),
             ),
             const SizedBox(height: 14),
@@ -411,7 +414,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                   label: const Text('CHECK IN',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1A237E),
+                    backgroundColor: AppTheme.primaryIndigo,
                     foregroundColor: Colors.white,
                     disabledBackgroundColor: Colors.grey.shade300,
                     disabledForegroundColor: Colors.grey.shade500,
@@ -434,7 +437,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                   label: const Text('SEND REPORT',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFFCA28),
+                    backgroundColor: AppTheme.accentAmberLight,
                     foregroundColor: Colors.black,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
@@ -531,7 +534,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
         subtitle: 'Acquiring GPS signal',
         trailing: const SizedBox(
           width: 18, height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF1A237E)),
+          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryIndigo),
         ),
       );
     }
@@ -562,6 +565,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
           trailing: IconButton(
             icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade400),
             onPressed: _checkLocation,
+            tooltip: 'Refresh location', // UX-audit #21
           ),
         );
 
@@ -575,6 +579,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
           trailing: IconButton(
             icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade400),
             onPressed: _checkLocation,
+            tooltip: 'Refresh location', // UX-audit #21
           ),
         );
 
@@ -614,6 +619,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
           trailing: IconButton(
             icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade400),
             onPressed: _checkLocation,
+            tooltip: 'Retry location check', // UX-audit #21
           ),
         );
 
@@ -657,7 +663,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                       )),
                     const SizedBox(height: 2),
                     Text(subtitle,
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600)), // UX-audit HH-15: 11 → 12
                   ],
                 ),
               ),
@@ -691,15 +697,15 @@ class _AttendanceTabState extends State<AttendanceTab> {
               decoration: BoxDecoration(
                 color: isVoice
                     ? const Color(0xFFE8EAF6)
-                    : const Color(0xFFFFF8E1),
+                    : AppTheme.needsReviewBackground,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(
                 isVoice ? LucideIcons.volume2 : LucideIcons.edit3,
                 size: 20,
                 color: isVoice
-                    ? const Color(0xFF1A237E)
-                    : const Color(0xFFFFCA28),
+                    ? AppTheme.primaryIndigo
+                    : AppTheme.accentAmberLight,
               ),
             ),
             const SizedBox(width: 14),
@@ -729,7 +735,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text('Exempt',
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.amber.shade800)),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.amber.shade800)), // UX-audit HH-15: 10 → 12
               ),
             Text(
               isVoice ? 'Voice' : 'Text',
@@ -761,15 +767,15 @@ class _AttendanceTabState extends State<AttendanceTab> {
           decoration: BoxDecoration(
             color: isVoice
                 ? const Color(0xFFE8EAF6)
-                : const Color(0xFFFFF8E1),
+                : AppTheme.needsReviewBackground,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Icon(
             isVoice ? LucideIcons.volume2 : LucideIcons.edit3,
             size: 20,
             color: isVoice
-                ? const Color(0xFF1A237E)
-                : const Color(0xFFFFCA28),
+                ? AppTheme.primaryIndigo
+                : AppTheme.accentAmberLight,
           ),
         ),
         title: Text(
@@ -799,7 +805,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                       voiceNote['transcription'] != null) ...[
                     Text('TRANSCRIPT',
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 12, // UX-audit HH-15: 10 → 12
                         fontWeight: FontWeight.bold,
                         color: Colors.grey.shade600,
                         letterSpacing: 0.5,
@@ -812,7 +818,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                         color: const Color(0xFFE8EAF6),
                         borderRadius: BorderRadius.circular(8),
                         border: const Border(
-                          left: BorderSide(color: Color(0xFF1A237E), width: 3),
+                          left: BorderSide(color: AppTheme.primaryIndigo, width: 3),
                         ),
                       ),
                       child: Text(
@@ -829,7 +835,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                 if (!isVoice && report['report_text'] != null) ...[
                   Text('REPORT CONTENT',
                     style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 12, // UX-audit HH-15: 10 → 12
                       fontWeight: FontWeight.bold,
                       color: Colors.grey.shade600,
                       letterSpacing: 0.5,
@@ -839,10 +845,10 @@ class _AttendanceTabState extends State<AttendanceTab> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFF8E1),
+                      color: AppTheme.needsReviewBackground,
                       borderRadius: BorderRadius.circular(8),
                       border: const Border(
-                        left: BorderSide(color: Color(0xFFFFCA28), width: 3),
+                        left: BorderSide(color: AppTheme.accentAmberLight, width: 3),
                       ),
                     ),
                     child: Text(
@@ -919,9 +925,9 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
                   .from('voice_notes')
                   .select('id')
                   .eq('audio_url', url)
-                  .single();
-              voiceNoteId = note['id']?.toString();
-            } catch (_) {}
+                  .maybeSingle(); // UX-audit CI-01
+              voiceNoteId = note?['id']?.toString();
+            } catch (e) { debugPrint('Error fetching voice note: $e'); } // UX-audit CI-03
           }
 
           widget.onReportSent(ReportType.voice, voiceNoteId: voiceNoteId);
@@ -966,7 +972,7 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1A237E),
+              color: AppTheme.primaryIndigo,
             )),
           const SizedBox(height: 4),
           Text('Record a voice note or type your report',
@@ -991,7 +997,7 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isRecording ? Colors.red : const Color(0xFF1A237E),
+                backgroundColor: _isRecording ? Colors.red : AppTheme.primaryIndigo,
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
@@ -1024,8 +1030,8 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
                 label: const Text('TYPE TEXT REPORT',
                   style: TextStyle(fontWeight: FontWeight.bold)),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF1A237E),
-                  side: const BorderSide(color: Color(0xFF1A237E)),
+                  foregroundColor: AppTheme.primaryIndigo,
+                  side: const BorderSide(color: AppTheme.primaryIndigo),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () => setState(() => _showTextInput = true),
@@ -1040,7 +1046,7 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFF1A237E), width: 2),
+                  borderSide: const BorderSide(color: AppTheme.primaryIndigo, width: 2),
                 ),
               ),
             ),
@@ -1053,7 +1059,7 @@ class _DailyReportSheetState extends State<_DailyReportSheet> {
                 label: const Text('SEND TEXT REPORT',
                   style: TextStyle(fontWeight: FontWeight.bold)),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFCA28),
+                  backgroundColor: AppTheme.accentAmberLight,
                   foregroundColor: Colors.black,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),

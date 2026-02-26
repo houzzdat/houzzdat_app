@@ -429,7 +429,7 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
         ),
         // Active / Inactive tabs
         Container(
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: TabBar(
             controller: _tabController,
             labelColor: AppTheme.primaryIndigo,
@@ -477,7 +477,7 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
       stream: _getTeamStream(statusFilter),
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
-          return const LoadingWidget(message: 'Loading team members...');
+          return const ShimmerLoadingList(itemCount: 4, itemHeight: 100); // UX-audit #4: shimmer instead of spinner
         }
 
         if (snap.hasError) {
@@ -511,7 +511,7 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
           future: _enrichAssociations(snap.data!, statusFilter),
           builder: (context, enrichedSnap) {
             if (enrichedSnap.connectionState == ConnectionState.waiting) {
-              return const LoadingWidget(message: 'Loading team details...');
+              return const ShimmerLoadingList(itemCount: 3, itemHeight: 100); // UX-audit #4: shimmer instead of spinner
             }
 
             final users = enrichedSnap.data ?? [];
@@ -526,6 +526,13 @@ class _TeamTabState extends State<TeamTab> with SingleTickerProviderStateMixin {
                 subtitle: statusFilter == 'active'
                     ? "Invite your first team member to get started"
                     : "Deactivated members will appear here",
+                action: statusFilter == 'active' // UX-audit #10: actionable empty state
+                    ? ActionButton(
+                        label: 'Add First Member',
+                        icon: Icons.person_add,
+                        onPressed: _handleInviteStaff,
+                      )
+                    : null,
               );
             }
 

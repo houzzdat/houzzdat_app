@@ -14,7 +14,6 @@ class FinancialPositionDetail extends StatelessWidget {
     final isPositive = state.netPosition >= 0;
 
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: Text(state.projectName,
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),

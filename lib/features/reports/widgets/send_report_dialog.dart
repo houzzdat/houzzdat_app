@@ -66,7 +66,8 @@ class _SendReportDialogState extends State<SendReportDialog> {
       dateRange = startDate == endDate
           ? fmt.format(start)
           : '${fmt.format(start)} to ${fmt.format(end)}';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error parsing date range: $e');
       dateRange = startDate;
     }
 
@@ -124,6 +125,7 @@ class _SendReportDialogState extends State<SendReportDialog> {
                   IconButton(
                     icon: const Icon(Icons.close, size: 20),
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Close', // UX-audit #21
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),

@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/super_admin/widgets/company_card_widget.dart';
 import 'package:houzzdat_app/features/super_admin/screens/company_detail_screen.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
 
 /// Tab displaying all companies with status filtering and management actions.
 /// Uses a FutureBuilder with manual refresh instead of stream (since Realtime
@@ -350,8 +351,8 @@ class CompaniesTabState extends State<CompaniesTab> {
   void _navigateToDetails(Map<String, dynamic> company) {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => CompanyDetailScreen(
+      FadeSlideRoute(
+        page: CompanyDetailScreen(
           accountId: company['id'],
           companyName: company['company_name'] ?? 'Company',
           status: company['status'] ?? 'active',
@@ -366,7 +367,7 @@ class CompaniesTabState extends State<CompaniesTab> {
       children: [
         // Filter chips
         Container(
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           padding: const EdgeInsets.symmetric(
             horizontal: AppTheme.spacingM,
             vertical: AppTheme.spacingS,

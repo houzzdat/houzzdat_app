@@ -31,7 +31,8 @@ class ReportCard extends StatelessWidget {
       } else {
         return 'Report \u2014 ${fmt.format(start)} to ${fmt.format(end)}';
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error parsing report date: $e');
       return 'Report \u2014 $startDate';
     }
   }
@@ -85,35 +86,31 @@ class ReportCard extends StatelessWidget {
       } else {
         timeAgo = DateFormat('d MMM, h:mm a').format(dt);
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Error parsing report time: $e');
+    }
 
     return GestureDetector(
       onTap: onTap,
       onLongPress: _canDelete && onDelete != null
           ? () => _showDeleteMenu(context)
           : null,
-      child: Container(
+      child: Card( // UX-audit #19: standardized Card elevation instead of custom BoxShadow
         margin: const EdgeInsets.symmetric(
           horizontal: AppTheme.spacingM,
           vertical: AppTheme.spacingXS,
         ),
-        padding: const EdgeInsets.all(AppTheme.spacingM),
-        decoration: BoxDecoration(
-          color: Colors.white,
+        elevation: AppTheme.elevationLow,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusL),
-          border: Border.all(
+          side: BorderSide(
             color: ownerStatus == 'sent'
                 ? AppTheme.successGreen.withValues(alpha: 0.3)
                 : Colors.grey.shade200,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
+        child: Padding(
+        padding: const EdgeInsets.all(AppTheme.spacingM),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -207,6 +204,7 @@ class ReportCard extends StatelessWidget {
             ),
           ],
         ),
+        ),
       ),
     );
   }
@@ -215,7 +213,8 @@ class ReportCard extends StatelessWidget {
     try {
       final dt = DateTime.parse(sentAt);
       return DateFormat('d MMM, h:mm a').format(dt);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error formatting sent date: $e');
       return sentAt;
     }
   }
@@ -223,7 +222,6 @@ class ReportCard extends StatelessWidget {
   void _showDeleteMenu(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXL)),
       ),

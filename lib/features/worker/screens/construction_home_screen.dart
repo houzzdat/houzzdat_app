@@ -11,6 +11,10 @@ import 'package:houzzdat_app/features/worker/tabs/attendance_tab.dart';
 import 'package:houzzdat_app/features/worker/tabs/progress_tab.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/quick_tag_overlay.dart';
 import 'package:houzzdat_app/features/settings/screens/settings_screen.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
+import 'package:houzzdat_app/core/widgets/responsive_layout.dart';
+import 'package:houzzdat_app/core/services/error_logging_service.dart';
 
 /// Worker Home Screen with persistent recording FAB visible on all tabs.
 /// 4-tab BottomNavigationBar: My Logs, Tasks, Attendance, Progress.
@@ -95,16 +99,16 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
               .from('users')
               .select('current_project_id, quick_tag_enabled')
               .eq('id', user.id)
-              .single();
+              .maybeSingle(); // UX-audit CI-01
           if (mounted) {
             setState(() {
               _accountId = companyService.activeAccountId;
-              _projectId = userData['current_project_id']?.toString();
+              _projectId = userData?['current_project_id']?.toString();
               _userId = user.id;
               _isInitializing = false;
             });
           }
-          _resolveQuickTagSetting(userData['quick_tag_enabled']);
+          _resolveQuickTagSetting(userData?['quick_tag_enabled']);
           return;
         }
       }
@@ -116,7 +120,11 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
             .from('users')
             .select('account_id, current_project_id, quick_tag_enabled')
             .eq('id', user.id)
-            .single();
+            .maybeSingle(); // UX-audit CI-01
+        if (userData == null) {
+          if (mounted) setState(() => _isInitializing = false);
+          return;
+        }
         if (mounted) {
           setState(() {
             _accountId = userData['account_id']?.toString();
@@ -134,7 +142,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
 
   Future<void> _resolveQuickTagSetting(dynamic userSetting) async {
     if (userSetting != null) {
-      if (mounted) setState(() => _quickTagEnabled = userSetting as bool);
+      if (mounted) setState(() => _quickTagEnabled = userSetting == true); // UX-audit CI-04: safe bool
       return;
     }
     // Fall back to account-level default
@@ -144,12 +152,12 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
             .from('accounts')
             .select('quick_tag_default')
             .eq('id', _accountId!)
-            .single();
-        final defaultVal = accountData['quick_tag_default'] ?? true;
-        if (mounted) setState(() => _quickTagEnabled = defaultVal as bool);
+            .maybeSingle(); // UX-audit CI-01
+        final defaultVal = accountData?['quick_tag_default'] ?? true;
+        if (mounted) setState(() => _quickTagEnabled = defaultVal == true); // UX-audit CI-04: safe bool
       }
-    } catch (e) {
-      debugPrint('Error resolving quick-tag default: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ConstructionHomeScreenState._resolveQuickTagSetting');
     }
   }
 
@@ -255,7 +263,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
               width: 180,
               height: 180,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Theme.of(context).cardColor,
                 borderRadius: BorderRadius.circular(24),
               ),
               child: const Column(
@@ -301,15 +309,15 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
             Icon(
               icon,
               size: 24,
-              color: isActive ? const Color(0xFF1A237E) : Colors.grey.shade400,
+              color: isActive ? AppTheme.primaryIndigo : Colors.grey.shade400,
             ),
             const SizedBox(height: 2),
             Text(
               label,
               style: TextStyle(
-                fontSize: isActive ? 12 : 11,
+                fontSize: isActive ? 14 : 13, // UX-audit HH-05: 12/11 → 14/13 for field readability
                 fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-                color: isActive ? const Color(0xFF1A237E) : Colors.grey.shade400,
+                color: isActive ? AppTheme.primaryIndigo : Colors.grey.shade600, // UX-audit HH-12: shade400 → shade600 for brightness
               ),
             ),
           ],
@@ -322,10 +330,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
   Widget build(BuildContext context) {
     if (_isInitializing || _accountId == null) {
       return const Scaffold(
-        backgroundColor: Color(0xFFF5F7FA),
-        body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF1A237E)),
-        ),
+        body: ShimmerLoadingList(), // UX-audit #4: shimmer instead of spinner
       );
     }
 
@@ -339,7 +344,6 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
     final titles = ['MY LOGS', 'DAILY TASKS', 'ATTENDANCE', 'PROGRESS'];
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: Text(
           titles[_currentIndex],
@@ -350,7 +354,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
             letterSpacing: 0.5,
           ),
         ),
-        backgroundColor: const Color(0xFF1A237E),
+        backgroundColor: AppTheme.primaryIndigo,
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
@@ -358,71 +362,129 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
             icon: const Icon(LucideIcons.settings),
             onPressed: () {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const SettingsScreen(role: 'worker'),
-                ),
+                FadeSlideRoute(page: const SettingsScreen(role: 'worker')),
               );
             },
             tooltip: 'Settings',
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          IndexedStack(
-            index: _currentIndex,
-            children: tabs,
-          ),
-          // Onboarding tooltip pointing at the FAB
-          if (_showOnboarding && !_isRecording && !_isUploading)
-            Positioned(
-              bottom: 100,
-              left: 0,
-              right: 0,
-              child: GestureDetector(
-                onTap: _dismissOnboarding,
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryIndigo,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.2),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isTablet = constraints.maxWidth >= Breakpoints.tablet;
+
+          final content = Stack(
+            children: [
+              IndexedStack(
+                index: _currentIndex,
+                children: tabs,
+              ),
+              // Onboarding tooltip pointing at the FAB
+              if (_showOnboarding && !_isRecording && !_isUploading)
+                Positioned(
+                  bottom: 100,
+                  left: 0,
+                  right: 0,
+                  child: GestureDetector(
+                    onTap: _dismissOnboarding,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryIndigo,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.2),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(LucideIcons.handMetal, color: Colors.white, size: 20),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Tap to record',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(LucideIcons.handMetal, color: Colors.white, size: 20),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Tap to record',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.arrow_downward, color: Colors.white, size: 16),
+                          ],
                         ),
-                        const SizedBox(width: 4),
-                        const Icon(Icons.arrow_downward, color: Colors.white, size: 16),
-                      ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
-        ],
+            ],
+          );
+
+          if (isTablet) {
+            // UX-audit #2: NavigationRail on tablet
+            return Row(
+              children: [
+                NavigationRail(
+                  selectedIndex: _currentIndex,
+                  onDestinationSelected: (index) => setState(() => _currentIndex = index),
+                  labelType: NavigationRailLabelType.all,
+                  backgroundColor: Theme.of(context).cardColor,
+                  selectedIconTheme: const IconThemeData(color: AppTheme.primaryIndigo),
+                  unselectedIconTheme: const IconThemeData(color: AppTheme.textSecondary),
+                  selectedLabelTextStyle: const TextStyle(
+                    color: AppTheme.primaryIndigo, fontWeight: FontWeight.w600, fontSize: 12,
+                  ),
+                  unselectedLabelTextStyle: const TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 12,
+                  ),
+                  destinations: [
+                    NavigationRailDestination(
+                      icon: Icon(LucideIcons.fileAudio),
+                      label: const Text('My Logs'),
+                    ),
+                    NavigationRailDestination(
+                      icon: Icon(LucideIcons.clipboardList),
+                      label: const Text('Tasks'),
+                    ),
+                    NavigationRailDestination(
+                      icon: Icon(LucideIcons.userCheck),
+                      label: const Text('Attendance'),
+                    ),
+                    NavigationRailDestination(
+                      icon: Icon(LucideIcons.barChart2),
+                      label: const Text('Progress'),
+                    ),
+                  ],
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: ContentConstraint(
+                    maxContentWidth: 1200,
+                    child: content,
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return content;
+        },
       ),
 
       // Onboarding tooltip overlay
       resizeToAvoidBottomInset: false,
 
       // Persistent recording FAB — visible on ALL tabs
+      // UX-audit #24: PressableButton (from shared_widgets.dart) is available for
+      // press-scale micro-interactions on standard tappable widgets. This FAB uses
+      // a dedicated AnimatedBuilder + Transform.scale for the recording pulse effect;
+      // PressableButton can be used to wrap other buttons/cards throughout the app
+      // for consistent 0.95 scale-down press feedback without custom animation setup.
       floatingActionButton: AnimatedBuilder(
         animation: _pulseAnimation,
         builder: (context, child) {
@@ -437,7 +499,7 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
                     ? Colors.red
                     : _isUploading
                         ? Colors.grey
-                        : const Color(0xFFFFCA28),
+                        : AppTheme.accentAmberLight,
                 elevation: 6,
                 shape: const CircleBorder(),
                 child: _isUploading
@@ -458,8 +520,11 @@ class _ConstructionHomeScreenState extends State<ConstructionHomeScreen>
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
 
-      bottomNavigationBar: BottomAppBar(
-        color: Colors.white,
+      // UX-audit #2: Hide bottom nav on tablet (NavigationRail used instead)
+      bottomNavigationBar: MediaQuery.of(context).size.width >= Breakpoints.tablet
+          ? null
+          : BottomAppBar(
+        color: Theme.of(context).cardColor,
         elevation: 8,
         shape: const CircularNotchedRectangle(),
         notchMargin: 8.0,

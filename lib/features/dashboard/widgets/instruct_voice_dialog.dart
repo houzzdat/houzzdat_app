@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
@@ -39,6 +40,7 @@ class _InstructVoiceDialogState extends State<InstructVoiceDialog> {
   }
 
   Future<void> _startRecording() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
     final hasPermission = await _recorder.checkPermission();
     if (!hasPermission) {
       setState(() => _error = 'Microphone permission denied');
@@ -64,6 +66,7 @@ class _InstructVoiceDialogState extends State<InstructVoiceDialog> {
   }
 
   Future<void> _stopRecording() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
     _timer?.cancel();
     final bytes = await _recorder.stopRecording();
     if (mounted) {
@@ -99,9 +102,9 @@ class _InstructVoiceDialogState extends State<InstructVoiceDialog> {
               .from('voice_notes')
               .select('user_id')
               .eq('id', voiceNoteId)
-              .single();
-          recipientId = vn['user_id'] as String?;
-        } catch (_) {}
+              .maybeSingle(); // UX-audit CI-01
+          recipientId = vn?['user_id']?.toString();
+        } catch (e) { debugPrint('Error loading voice note: $e'); } // UX-audit CI-03
       }
 
       // Upload voice note using AudioRecorderService
@@ -126,17 +129,19 @@ class _InstructVoiceDialogState extends State<InstructVoiceDialog> {
           .eq('project_id', projectId)
           .order('created_at', ascending: false)
           .limit(1)
-          .single();
+          .maybeSingle(); // UX-audit CI-01
 
       // Link the instruction voice note to the action item
-      await _supabase
-          .from('action_items')
-          .update({
-            'delegation_voice_note_id': recentNote['id'],
-            'status': 'in_progress',
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', widget.actionItem['id']);
+      if (recentNote != null) {
+        await _supabase
+            .from('action_items')
+            .update({
+              'delegation_voice_note_id': recentNote['id'],
+              'status': 'in_progress',
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('id', widget.actionItem['id']);
+      }
 
       // Create notification for the recipient
       if (recipientId != null) {
@@ -179,7 +184,6 @@ class _InstructVoiceDialogState extends State<InstructVoiceDialog> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: const Text('Record Instruction'),
         backgroundColor: AppTheme.primaryIndigo,
@@ -187,6 +191,7 @@ class _InstructVoiceDialogState extends State<InstructVoiceDialog> {
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: _isUploading ? null : () => Navigator.pop(context, false),
+          tooltip: 'Close', // UX-audit #21
         ),
       ),
       body: SafeArea(

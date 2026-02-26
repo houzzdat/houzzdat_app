@@ -19,7 +19,6 @@ class ProjectHealthDetail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: Text(state.projectName,
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -33,13 +32,13 @@ class ProjectHealthDetail extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Health score hero section
-            _buildHeroSection(),
+            _buildHeroSection(context),
 
             // Metrics grid
-            _buildMetricsGrid(),
+            _buildMetricsGrid(context),
 
             // Timeline info
-            if (state.hasPlan) _buildTimelineCard(),
+            if (state.hasPlan) _buildTimelineCard(context),
 
             // Progress vs Plan
             if (state.hasPlan) ...[
@@ -50,29 +49,29 @@ class ProjectHealthDetail extends StatelessWidget {
                 actualProgress: state.actualProgress,
               ),
             ] else ...[
-              _buildNoPlanCard(),
+              _buildNoPlanCard(context),
             ],
 
             // Top blockers
             if (state.topBlockers.isNotEmpty) ...[
               _buildSectionHeader('TOP BLOCKERS'),
-              ...state.topBlockers.map(_buildBlockerRow),
+              ...state.topBlockers.map((b) => _buildBlockerRow(context, b)),
             ],
 
             // Activity section
             _buildSectionHeader('ACTIVITY'),
-            _buildActivityCard(),
+            _buildActivityCard(context),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildHeroSection() {
+  Widget _buildHeroSection(BuildContext context) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
-      color: Colors.white,
+      color: Theme.of(context).cardColor,
       child: Row(
         children: [
           HealthScoreIndicator(score: state.healthScore, size: 96, strokeWidth: 8),
@@ -163,34 +162,34 @@ class ProjectHealthDetail extends StatelessWidget {
     );
   }
 
-  Widget _buildMetricsGrid() {
+  Widget _buildMetricsGrid(BuildContext context) {
     return Container(
       margin: const EdgeInsets.all(16),
       child: Row(
         children: [
-          Expanded(child: _buildMetricCard('Tasks Done', '${state.completedTasks}/${state.totalTasks}',
+          Expanded(child: _buildMetricCard(context, 'Tasks Done', '${state.completedTasks}/${state.totalTasks}',
               Icons.check_circle_outline, AppTheme.successGreen)),
           const SizedBox(width: 8),
-          Expanded(child: _buildMetricCard('Blockers', '${state.blockedTasks}',
+          Expanded(child: _buildMetricCard(context, 'Blockers', '${state.blockedTasks}',
               Icons.warning_amber, state.blockedTasks > 0 ? AppTheme.errorRed : AppTheme.textSecondary)),
           const SizedBox(width: 8),
-          Expanded(child: _buildMetricCard('Overdue', '${state.overdueTasks}',
+          Expanded(child: _buildMetricCard(context, 'Overdue', '${state.overdueTasks}',
               Icons.schedule, state.overdueTasks > 0 ? AppTheme.warningOrange : AppTheme.textSecondary)),
           const SizedBox(width: 8),
-          Expanded(child: _buildMetricCard('On Site', '${state.workersOnSiteToday}/${state.totalWorkers}',
+          Expanded(child: _buildMetricCard(context, 'On Site', '${state.workersOnSiteToday}/${state.totalWorkers}',
               Icons.people_outline, AppTheme.infoBlue)),
         ],
       ),
     );
   }
 
-  Widget _buildMetricCard(String label, String value, IconData icon, Color color) {
+  Widget _buildMetricCard(BuildContext context, String label, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Column(
         children: [
@@ -204,15 +203,15 @@ class ProjectHealthDetail extends StatelessWidget {
     );
   }
 
-  Widget _buildTimelineCard() {
+  Widget _buildTimelineCard(BuildContext context) {
     final dateFormat = DateFormat('MMM d, yyyy');
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Row(
         children: [
@@ -251,12 +250,12 @@ class ProjectHealthDetail extends StatelessWidget {
     );
   }
 
-  Widget _buildNoPlanCard() {
+  Widget _buildNoPlanCard(BuildContext context) {
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.primaryIndigo.withValues(alpha: 0.2)),
       ),
@@ -289,14 +288,14 @@ class ProjectHealthDetail extends StatelessWidget {
     );
   }
 
-  Widget _buildBlockerRow(BlockerItem blocker) {
+  Widget _buildBlockerRow(BuildContext context, BlockerItem blocker) {
     final priorityColor = blocker.priority == 'Critical' ? AppTheme.errorRed : AppTheme.warningOrange;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: priorityColor.withValues(alpha: 0.2)),
       ),
@@ -348,21 +347,21 @@ class ProjectHealthDetail extends StatelessWidget {
     );
   }
 
-  Widget _buildActivityCard() {
+  Widget _buildActivityCard(BuildContext context) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Row(
         children: [
           _buildActivityMetric(Icons.mic, '${state.voiceNotesToday}', 'Notes Today', AppTheme.primaryIndigo),
-          _divider(),
+          _divider(context),
           _buildActivityMetric(Icons.people, '${state.workersOnSiteToday}', 'On Site', AppTheme.successGreen),
-          _divider(),
+          _divider(context),
           _buildActivityMetric(
             Icons.access_time,
             state.daysSinceLastActivity == 0 ? 'Today' : '${state.daysSinceLastActivity}d',
@@ -387,8 +386,8 @@ class ProjectHealthDetail extends StatelessWidget {
     );
   }
 
-  Widget _divider() {
-    return Container(width: 1, height: 40, color: Colors.grey.shade200);
+  Widget _divider(BuildContext context) {
+    return Container(width: 1, height: 40, color: Theme.of(context).dividerColor);
   }
 
   Widget _buildSectionHeader(String title) {

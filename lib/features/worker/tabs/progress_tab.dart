@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 
 /// Progress tab — shows worker performance metrics for selected period.
 ///
@@ -29,7 +30,9 @@ class ProgressTab extends StatefulWidget {
   State<ProgressTab> createState() => _ProgressTabState();
 }
 
-class _ProgressTabState extends State<ProgressTab> {
+class _ProgressTabState extends State<ProgressTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true; // UX-audit #3: preserve tab state
   final _supabase = Supabase.instance.client;
 
   bool _isLoading = true;
@@ -259,10 +262,9 @@ class _ProgressTabState extends State<ProgressTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // UX-audit #3: required by AutomaticKeepAliveClientMixin
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppTheme.primaryIndigo),
-      );
+      return const ShimmerLoadingList(); // UX-audit #4: shimmer instead of spinner
     }
 
     if (_error != null) {

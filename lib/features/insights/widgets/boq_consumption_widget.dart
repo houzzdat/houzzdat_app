@@ -26,7 +26,7 @@ class BOQConsumptionWidget extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Summary card
-        _buildSummaryCard(),
+        _buildSummaryCard(context),
 
         // Section header
         Padding(
@@ -38,12 +38,12 @@ class BOQConsumptionWidget extends StatelessWidget {
         ),
 
         // BOQ items
-        ...state.boqVariances.map(_buildBOQItemRow),
+        ...state.boqVariances.map((item) => _buildBOQItemRow(context, item)),
       ],
     );
   }
 
-  Widget _buildSummaryCard() {
+  Widget _buildSummaryCard(BuildContext context) {
     final utilColor = state.boqUtilization > 100
         ? AppTheme.errorRed
         : state.boqUtilization > 80
@@ -54,9 +54,9 @@ class BOQConsumptionWidget extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Column(
         children: [
@@ -182,7 +182,7 @@ class BOQConsumptionWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildBOQItemRow(BOQVarianceItem item) {
+  Widget _buildBOQItemRow(BuildContext context, BOQVarianceItem item) {
     final consumption = item.plannedQty > 0
         ? (item.consumedQty / item.plannedQty * 100)
         : 0.0;
@@ -192,9 +192,9 @@ class BOQConsumptionWidget extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

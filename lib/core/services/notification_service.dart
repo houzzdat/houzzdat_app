@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:houzzdat_app/core/services/error_logging_service.dart';
 
 /// Service for managing in-app notifications.
 /// Handles creating, reading, and listening for notifications.
@@ -55,8 +56,8 @@ class NotificationService {
 
       _unreadCount = (result as List).length;
       _unreadCountController.add(_unreadCount);
-    } catch (e) {
-      debugPrint('Error loading unread count: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'NotificationService._loadUnreadCount');
     }
   }
 
@@ -83,8 +84,8 @@ class NotificationService {
       return (data as List)
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
-    } catch (e) {
-      debugPrint('Error fetching notifications: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'NotificationService.getNotifications');
       return [];
     }
   }
@@ -102,8 +103,8 @@ class NotificationService {
 
       _unreadCount = (_unreadCount - 1).clamp(0, double.maxFinite.toInt());
       _unreadCountController.add(_unreadCount);
-    } catch (e) {
-      debugPrint('Error marking notification as read: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'NotificationService.markAsRead');
     }
   }
 
@@ -121,8 +122,8 @@ class NotificationService {
 
       _unreadCount = 0;
       _unreadCountController.add(_unreadCount);
-    } catch (e) {
-      debugPrint('Error marking all as read: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'NotificationService.markAllAsRead');
     }
   }
 
@@ -148,8 +149,8 @@ class NotificationService {
         'reference_id': referenceId,
         'reference_type': referenceType,
       });
-    } catch (e) {
-      debugPrint('Warning: Could not create notification: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'NotificationService.create');
     }
   }
 

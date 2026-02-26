@@ -26,7 +26,7 @@ class BudgetVsActualsWidget extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Budget summary card
-        _buildSummaryCard(),
+        _buildSummaryCard(context),
 
         // Section header
         Padding(
@@ -38,7 +38,7 @@ class BudgetVsActualsWidget extends StatelessWidget {
         ),
 
         // Category bars
-        ...state.budgetByCategory.keys.map(_buildCategoryBar),
+        ...state.budgetByCategory.keys.map((k) => _buildCategoryBar(context, k)),
 
         // Line item variances
         if (state.lineItemVariances.isNotEmpty) ...[
@@ -49,13 +49,13 @@ class BudgetVsActualsWidget extends StatelessWidget {
               letterSpacing: 0.5,
             )),
           ),
-          ...state.lineItemVariances.map(_buildLineItemRow),
+          ...state.lineItemVariances.map((item) => _buildLineItemRow(context, item)),
         ],
       ],
     );
   }
 
-  Widget _buildSummaryCard() {
+  Widget _buildSummaryCard(BuildContext context) {
     final utilColor = state.budgetUtilization > 100
         ? AppTheme.errorRed
         : state.budgetUtilization > 80
@@ -66,9 +66,9 @@ class BudgetVsActualsWidget extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Column(
         children: [
@@ -161,7 +161,7 @@ class BudgetVsActualsWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildCategoryBar(String category) {
+  Widget _buildCategoryBar(BuildContext context, String category) {
     final budgeted = state.budgetByCategory[category] ?? 0;
     final actual = state.spendByCategory[category] ?? 0;
     final utilization = budgeted > 0 ? (actual / budgeted * 100) : 0.0;
@@ -175,9 +175,9 @@ class BudgetVsActualsWidget extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -234,7 +234,7 @@ class BudgetVsActualsWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildLineItemRow(BudgetLineVariance item) {
+  Widget _buildLineItemRow(BuildContext context, BudgetLineVariance item) {
     final utilColor = item.utilizationPercent > 100
         ? AppTheme.errorRed
         : item.utilizationPercent > 80
@@ -245,9 +245,9 @@ class BudgetVsActualsWidget extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Row(
         children: [

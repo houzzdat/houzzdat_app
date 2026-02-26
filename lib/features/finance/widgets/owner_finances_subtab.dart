@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+import 'package:houzzdat_app/core/services/finance_export_service.dart';
 import 'package:houzzdat_app/features/finance/widgets/owner_payment_card.dart';
 import 'package:houzzdat_app/features/finance/widgets/fund_request_card.dart';
 import 'package:houzzdat_app/features/finance/widgets/add_owner_payment_sheet.dart';
 import 'package:houzzdat_app/features/finance/widgets/add_fund_request_sheet.dart';
+import 'package:houzzdat_app/features/finance/widgets/finance_charts.dart';
 import 'package:intl/intl.dart';
 
 /// Owner Finances sub-tab.
@@ -33,6 +35,7 @@ class _OwnerFinancesSubtabState extends State<OwnerFinancesSubtab>
   // Section collapse state
   bool _paymentsExpanded = true;
   bool _requestsExpanded = true;
+  bool _chartsExpanded = true; // UX-audit PP-03: chart section visibility
 
   RealtimeChannel? _ownerPaymentChannel;
   RealtimeChannel? _fundRequestChannel;
@@ -137,7 +140,8 @@ class _OwnerFinancesSubtabState extends State<OwnerFinancesSubtab>
                 }
               }
               return unique;
-            } catch (_) {
+            } catch (e) {
+              debugPrint('Error loading account owners: $e');
               return <Map<String, dynamic>>[];
             }
           },
@@ -259,12 +263,22 @@ class _OwnerFinancesSubtabState extends State<OwnerFinancesSubtab>
     }
   }
 
+  /// UX-audit PP-02: Generate and share financial report PDF
+  void _handleExportPdf() {
+    FinanceExportService.generateAndShare(
+      context: context,
+      payments: _ownerPayments,
+      fundRequests: _fundRequests,
+      accountName: 'Financial Report',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
     if (_isLoading) {
-      return const LoadingWidget(message: 'Loading owner finances...');
+      return const ShimmerLoadingList(itemCount: 4, itemHeight: 120); // UX-audit #4: shimmer instead of spinner
     }
 
     return RefreshIndicator(
@@ -277,7 +291,7 @@ class _OwnerFinancesSubtabState extends State<OwnerFinancesSubtab>
             // ── Summary row ──
             Container(
               padding: const EdgeInsets.all(AppTheme.spacingM),
-              color: Colors.white,
+              color: Theme.of(context).cardColor,
               child: Row(
                 children: [
                   _SummaryMetric(
@@ -303,7 +317,50 @@ class _OwnerFinancesSubtabState extends State<OwnerFinancesSubtab>
                 ],
               ),
             ),
-            const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+            // UX-audit PP-02: Export button row
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppTheme.spacingM,
+                vertical: AppTheme.spacingXS,
+              ),
+              child: Row(
+                children: [
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _handleExportPdf,
+                    icon: const Icon(Icons.picture_as_pdf, size: 16),
+                    label: const Text('Export PDF'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppTheme.primaryIndigo,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
+
+            // UX-audit PP-03: Financial analytics charts
+            _CollapsibleSection(
+              title: 'Analytics',
+              count: 0,
+              isExpanded: _chartsExpanded,
+              onToggle: () => setState(() => _chartsExpanded = !_chartsExpanded),
+            ),
+            if (_chartsExpanded) ...[
+              MonthlyCashFlowChart(
+                payments: _ownerPayments,
+                fundRequests: _fundRequests,
+              ),
+              // UX-audit PP-07: Project expenditure breakdown with month-over-month delta
+              ProjectExpenditureChart(
+                fundRequests: _fundRequests,
+                projects: _projects,
+              ),
+              FundRequestStatusChart(fundRequests: _fundRequests),
+              const SizedBox(height: AppTheme.spacingS),
+            ],
+            const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
 
             // ── Payments Received section ──
             _CollapsibleSection(
@@ -320,12 +377,17 @@ class _OwnerFinancesSubtabState extends State<OwnerFinancesSubtab>
             ),
             if (_paymentsExpanded) ...[
               if (_ownerPayments.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(AppTheme.spacingL),
-                  child: EmptyStateWidget(
+                Padding(
+                  padding: const EdgeInsets.all(AppTheme.spacingL),
+                  child: EmptyStateWidget( // UX-audit #10: actionable empty state
                     icon: Icons.account_balance_outlined,
                     title: 'No payments received',
                     subtitle: 'Record payments from owners here',
+                    action: ActionButton(
+                      label: 'Record Payment',
+                      icon: Icons.add,
+                      onPressed: _handleRecordOwnerPayment,
+                    ),
                   ),
                 )
               else
@@ -353,12 +415,17 @@ class _OwnerFinancesSubtabState extends State<OwnerFinancesSubtab>
             ),
             if (_requestsExpanded) ...[
               if (_fundRequests.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(AppTheme.spacingL),
-                  child: EmptyStateWidget(
+                Padding(
+                  padding: const EdgeInsets.all(AppTheme.spacingL),
+                  child: EmptyStateWidget( // UX-audit #10: actionable empty state
                     icon: Icons.request_quote_outlined,
                     title: 'No fund requests',
                     subtitle: 'Create a request for funds from the owner',
+                    action: ActionButton(
+                      label: 'New Fund Request',
+                      icon: Icons.add,
+                      onPressed: _handleCreateFundRequest,
+                    ),
                   ),
                 )
               else
@@ -449,7 +516,7 @@ class _CollapsibleSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.white,
+      color: Theme.of(context).cardColor,
       padding: const EdgeInsets.symmetric(
         horizontal: AppTheme.spacingM,
         vertical: AppTheme.spacingXS,

@@ -174,7 +174,6 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
         : 'Report for ${fmt.format(_startDate)} to ${fmt.format(_endDate)}';
 
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: const Text('Generate Report', style: TextStyle(fontSize: 16)),
         backgroundColor: AppTheme.primaryIndigo,

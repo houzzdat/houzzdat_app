@@ -264,17 +264,20 @@ class ProjectStateAgent {
   }
 
   Future<Map<String, double>> _fetchHealthWeights(String accountId) async {
-    // Try account-specific weights first, then fall back to global
+    // Try account-specific weights first, then fall back to global.
+    // Use .limit(1) before .maybeSingle() to guard against duplicate seed rows.
     var weights = await _supabase
         .from('health_score_weights')
         .select()
         .eq('account_id', accountId)
+        .limit(1)
         .maybeSingle();
 
     weights ??= await _supabase
         .from('health_score_weights')
         .select()
         .isFilter('account_id', null)
+        .limit(1)
         .maybeSingle();
 
     if (weights == null) {

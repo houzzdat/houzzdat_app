@@ -386,7 +386,6 @@ class _PlanSetupScreenState extends State<PlanSetupScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: Text('Plan: ${widget.projectName}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         backgroundColor: AppTheme.primaryIndigo,
@@ -506,6 +505,7 @@ class _PlanSetupScreenState extends State<PlanSetupScreen>
                       trailing: IconButton(
                         icon: const Icon(Icons.delete_outline, size: 20, color: AppTheme.errorRed),
                         onPressed: () => setState(() => _milestones.removeAt(index)),
+                        tooltip: 'Delete milestone', // UX-audit #21
                       ),
                     );
                   },
@@ -538,6 +538,7 @@ class _PlanSetupScreenState extends State<PlanSetupScreen>
                       trailing: IconButton(
                         icon: const Icon(Icons.delete_outline, size: 20, color: AppTheme.errorRed),
                         onPressed: () => setState(() => _budgetItems.removeAt(index)),
+                        tooltip: 'Delete budget item', // UX-audit #21
                       ),
                     );
                   },
@@ -573,6 +574,7 @@ class _PlanSetupScreenState extends State<PlanSetupScreen>
                       trailing: IconButton(
                         icon: const Icon(Icons.delete_outline, size: 20, color: AppTheme.errorRed),
                         onPressed: () => setState(() => _boqItems.removeAt(index)),
+                        tooltip: 'Delete BOQ item', // UX-audit #21
                       ),
                     );
                   },

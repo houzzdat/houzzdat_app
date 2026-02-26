@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
+import 'package:houzzdat_app/core/services/error_logging_service.dart';
 
 /// Service for broadcasting voice messages to multiple team members.
 class BroadcastService {
@@ -96,8 +97,8 @@ class BroadcastService {
         recipientCount: recipientIds.length,
         voiceNoteId: voiceNoteId,
       );
-    } catch (e) {
-      debugPrint('Error sending broadcast: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'BroadcastService.sendBroadcast');
       rethrow;
     }
   }

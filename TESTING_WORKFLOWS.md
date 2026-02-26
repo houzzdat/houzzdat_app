@@ -79,7 +79,7 @@ This document lists every user-facing workflow in the app, organized by role, wi
 3. Filter by: status, category, search text, sort order
 4. Tap card to expand → see: audio player, transcript, AI analysis, confidence score
 5. **Actions available:**
-   - Approve action → status changes
+   - Approve action → status changes   
    - Reject action → enter reason
    - Mark Complete
    - Add proof image

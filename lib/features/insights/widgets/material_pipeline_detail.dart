@@ -34,7 +34,6 @@ class _MaterialPipelineDetailState extends State<MaterialPipelineDetail>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: Text(widget.state.projectName,
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -117,7 +116,7 @@ class _MaterialPipelineDetailState extends State<MaterialPipelineDetail>
       ('Planned', widget.state.planned, const Color(0xFF1565C0), Icons.checklist),
       ('Ordered', widget.state.ordered, const Color(0xFFEF6C00), Icons.shopping_cart),
       ('Delivered', widget.state.delivered, const Color(0xFF2E7D32), Icons.local_shipping),
-      ('Installed', widget.state.installed, const Color(0xFF1A237E), Icons.check_circle),
+      ('Installed', widget.state.installed, AppTheme.primaryIndigo, Icons.check_circle),
     ];
 
     return Container(
@@ -433,7 +432,7 @@ class _MaterialPipelineDetailState extends State<MaterialPipelineDetail>
 
   (IconData, Color) _getStatusConfig(String status) {
     switch (status) {
-      case 'installed': return (Icons.check_circle, const Color(0xFF1A237E));
+      case 'installed': return (Icons.check_circle, AppTheme.primaryIndigo);
       case 'delivered': return (Icons.local_shipping, AppTheme.successGreen);
       case 'ordered': return (Icons.shopping_cart, AppTheme.warningOrange);
       case 'planned': return (Icons.checklist, AppTheme.infoBlue);

@@ -17,10 +17,16 @@ import 'package:houzzdat_app/features/dashboard/widgets/recipient_selector_dialo
 import 'package:houzzdat_app/features/dashboard/widgets/broadcast_voice_dialog.dart';
 import 'package:houzzdat_app/features/reports/screens/reports_screen.dart';
 import 'package:houzzdat_app/features/insights/screens/insights_screen.dart';
+import 'package:houzzdat_app/features/documents/screens/documents_screen.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/quick_tag_overlay.dart';
-import 'package:houzzdat_app/features/insights/services/review_queue_service.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/recording_preview_dialog.dart';
 import 'package:houzzdat_app/features/settings/screens/settings_screen.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
+import 'package:houzzdat_app/core/widgets/responsive_layout.dart';
+import 'package:houzzdat_app/core/widgets/onboarding_overlay.dart';
+import 'package:houzzdat_app/core/services/error_logging_service.dart';
+import 'package:houzzdat_app/l10n/app_strings.dart';
 
 class ManagerDashboardClassic extends StatefulWidget {
   const ManagerDashboardClassic({super.key});
@@ -35,11 +41,10 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
   final _companyService = CompanyContextService();
 
   String? _accountId;
-  int _currentIndex = 0;
+  int _currentIndex = 1;
   bool _isRecording = false;
   bool _isUploading = false;
   bool _quickTagEnabled = true;
-  int _reviewBadgeCount = 0;
   Duration _recordingDuration = Duration.zero;
   Timer? _recordingTimer;
 
@@ -85,18 +90,52 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
         setState(() => _accountId = companyService.activeAccountId);
       }
       _loadQuickTagSetting();
-      _loadReviewBadgeCount();
+      _showOnboardingIfNeeded();
       return;
     }
 
     // Fallback: legacy approach
     final user = _supabase.auth.currentUser;
     if (user != null) {
-      final data = await _supabase.from('users').select('account_id').eq('id', user.id).single();
+      final data = await _supabase.from('users').select('account_id').eq('id', user.id).maybeSingle(); // UX-audit CI-01
+      if (data == null) return;
       if (mounted) setState(() => _accountId = data['account_id']?.toString());
       _loadQuickTagSetting();
-      _loadReviewBadgeCount();
     }
+  }
+
+  // UX-audit #11: First-login onboarding coach marks
+  Future<void> _showOnboardingIfNeeded() async {
+    // Slight delay so UI renders first
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (!mounted) return;
+
+    await OnboardingOverlay.maybeShow(
+      context,
+      key: 'manager_dashboard',
+      steps: const [
+        OnboardingStep(
+          title: AppStrings.onboardingRecordTitle,
+          subtitle: AppStrings.onboardingRecordSubtitle,
+          icon: Icons.mic,
+        ),
+        OnboardingStep(
+          title: AppStrings.onboardingTriageTitle,
+          subtitle: AppStrings.onboardingTriageSubtitle,
+          icon: Icons.checklist,
+        ),
+        OnboardingStep(
+          title: AppStrings.onboardingTrackTitle,
+          subtitle: AppStrings.onboardingTrackSubtitle,
+          icon: Icons.insights,
+        ),
+        OnboardingStep(
+          title: AppStrings.onboardingReportsTitle,
+          subtitle: AppStrings.onboardingReportsSubtitle,
+          icon: Icons.assessment,
+        ),
+      ],
+    );
   }
 
   Future<void> _loadQuickTagSetting() async {
@@ -108,31 +147,21 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
           .from('users')
           .select('quick_tag_enabled')
           .eq('id', user.id)
-          .single();
+          .maybeSingle(); // UX-audit CI-01
 
       final accountData = await _supabase
           .from('accounts')
           .select('quick_tag_default')
           .eq('id', _accountId!)
-          .single();
+          .maybeSingle(); // UX-audit CI-01
 
-      final enabled = userData['quick_tag_enabled']
-          ?? accountData['quick_tag_default']
+      final enabled = userData?['quick_tag_enabled']
+          ?? accountData?['quick_tag_default']
           ?? true;
 
-      if (mounted) setState(() => _quickTagEnabled = enabled as bool);
-    } catch (e) {
-      debugPrint('Error loading quick-tag setting: $e');
-    }
-  }
-
-  Future<void> _loadReviewBadgeCount() async {
-    if (_accountId == null) return;
-    try {
-      final count = await ReviewQueueService().getUnreviewedCount(_accountId!);
-      if (mounted) setState(() => _reviewBadgeCount = count);
-    } catch (e) {
-      debugPrint('Error loading review badge count: $e');
+      if (mounted) setState(() => _quickTagEnabled = enabled == true); // UX-audit CI-04: safe bool
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ManagerDashboardClassicState._loadQuickTagSetting');
     }
   }
 
@@ -208,8 +237,8 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
                 .from('users')
                 .select('current_project_id')
                 .eq('id', user.id)
-                .single();
-            final projectId = userData['current_project_id']?.toString();
+                .maybeSingle(); // UX-audit CI-01
+            final projectId = userData?['current_project_id']?.toString();
 
             if (projectId != null) {
               final result = await _recorderService.uploadAudio(
@@ -250,8 +279,8 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
             } else {
               if (mounted) setState(() => _isUploading = false);
             }
-          } catch (e) {
-            debugPrint('Error uploading voice note: $e');
+          } catch (e, st) {
+            ErrorLogging.capture(e, stackTrace: st, context: '_ManagerDashboardClassicState._handleProjectNote');
             if (mounted) setState(() => _isUploading = false);
           }
         } else {
@@ -303,8 +332,8 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
           .from('users')
           .select('current_project_id')
           .eq('id', user.id)
-          .single();
-      final projectId = userData['current_project_id']?.toString() ?? '';
+          .maybeSingle(); // UX-audit CI-01
+      final projectId = userData?['current_project_id']?.toString() ?? '';
 
       final result = await BroadcastService().sendBroadcast(
         audioBytes: audioBytes,
@@ -332,8 +361,8 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
           ),
         );
       }
-    } catch (e) {
-      debugPrint('Error sending broadcast: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ManagerDashboardClassicState._handleBroadcast');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -349,27 +378,24 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
   Widget build(BuildContext context) {
     if (_accountId == null || _accountId!.isEmpty) {
       return const Scaffold(
-        backgroundColor: AppTheme.backgroundGrey,
-        body: Center(
-          child: CircularProgressIndicator(color: AppTheme.primaryIndigo),
-        ),
+        body: ShimmerLoadingList(), // UX-audit #4: shimmer instead of spinner
       );
     }
 
     final accountId = _accountId!;
 
     // Map bottom nav indices to tabs:
-    // 0 = Actions, 1 = Sites, 2 = Central FAB (placeholder), 3 = Team, 4 = Feed
+    // 0 = Actions, 1 = Insights, 2 = Central FAB (placeholder), 3 = Team, 4 = Finance, 5 = Documents
     final tabs = [
       ActionsTab(accountId: accountId),
-      ProjectsTab(accountId: accountId),
+      InsightsTabBody(accountId: accountId),
       const SizedBox.shrink(), // Placeholder for central FAB
       TeamTab(accountId: accountId),
       FinanceTab(accountId: accountId),
+      DocumentsTabBody(accountId: accountId),
     ];
 
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: const Text('MANAGER DASHBOARD', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         backgroundColor: AppTheme.primaryIndigo,
@@ -377,30 +403,29 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
         elevation: 0,
         actions: [
           IconButton(
-            icon: Badge(
-              isLabelVisible: _reviewBadgeCount > 0,
-              label: Text(
-                _reviewBadgeCount > 99 ? '99+' : '$_reviewBadgeCount',
-                style: const TextStyle(fontSize: 10),
-              ),
-              child: const Icon(Icons.insights),
-            ),
+            icon: const Icon(Icons.business_rounded),
             onPressed: () {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => InsightsScreen(accountId: accountId),
+                FadeSlideRoute(
+                  page: Scaffold(
+                    appBar: AppBar(
+                      title: const Text('SITES', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      backgroundColor: AppTheme.primaryIndigo,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                    ),
+                    body: ProjectsTab(accountId: accountId),
+                  ),
                 ),
-              ).then((_) => _loadReviewBadgeCount());
+              );
             },
-            tooltip: 'Insights',
+            tooltip: 'Sites',
           ),
           IconButton(
             icon: const Icon(Icons.assessment_outlined),
             onPressed: () {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => ReportsScreen(accountId: accountId),
-                ),
+                FadeSlideRoute(page: ReportsScreen(accountId: accountId)),
               );
             },
             tooltip: 'Reports',
@@ -415,34 +440,111 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
             icon: const Icon(Icons.settings),
             onPressed: () {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => SettingsScreen(
-                    role: 'manager',
-                    accountId: accountId,
-                  ),
-                ),
+                FadeSlideRoute(page: SettingsScreen(
+                  role: 'manager',
+                  accountId: accountId,
+                )),
               );
             },
             tooltip: 'Settings',
           ),
         ],
       ),
-      body: Column(
-        children: [
-          const OfflineBanner(),
-          CriticalAlertBanner(
-            accountId: accountId,
-            onViewActions: () {
-              setState(() => _currentIndex = 0);
-            },
-          ),
-          Expanded(
-            child: IndexedStack(
-              index: _currentIndex,
-              children: tabs,
-            ),
-          ),
-        ],
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isTablet = constraints.maxWidth >= Breakpoints.tablet;
+
+          if (isTablet) {
+            // UX-audit #2: NavigationRail on tablet
+            // Map real tab indices (0,1,3,4) to rail indices (0,1,2,3), skipping FAB placeholder at 2
+            final railIndex = _currentIndex > 2 ? _currentIndex - 1 : _currentIndex;
+
+            return Column(
+              children: [
+                const OfflineBanner(),
+                CriticalAlertBanner(
+                  accountId: accountId,
+                  onViewActions: () => setState(() => _currentIndex = 0),
+                ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      NavigationRail(
+                        selectedIndex: railIndex.clamp(0, 3),
+                        onDestinationSelected: (index) {
+                          // Map rail index back: 0→0, 1→1, 2→3, 3→4
+                          final tabIndex = index >= 2 ? index + 1 : index;
+                          setState(() => _currentIndex = tabIndex);
+                        },
+                        labelType: NavigationRailLabelType.all,
+                        backgroundColor: Theme.of(context).cardColor,
+                        selectedIconTheme: const IconThemeData(color: AppTheme.primaryIndigo),
+                        unselectedIconTheme: const IconThemeData(color: AppTheme.textSecondary),
+                        selectedLabelTextStyle: const TextStyle(
+                          color: AppTheme.primaryIndigo, fontWeight: FontWeight.w600, fontSize: 12,
+                        ),
+                        unselectedLabelTextStyle: const TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 12,
+                        ),
+                        destinations: const [
+                          NavigationRailDestination(
+                            icon: Icon(Icons.checklist_outlined),
+                            selectedIcon: Icon(Icons.checklist),
+                            label: Text('Actions'),
+                          ),
+                          NavigationRailDestination(
+                            icon: Icon(Icons.insights_outlined),
+                            selectedIcon: Icon(Icons.insights),
+                            label: Text('Insights'),
+                          ),
+                          NavigationRailDestination(
+                            icon: Icon(Icons.people_outlined),
+                            selectedIcon: Icon(Icons.people),
+                            label: Text('Team'),
+                          ),
+                          NavigationRailDestination(
+                            icon: Icon(Icons.account_balance_wallet_outlined),
+                            selectedIcon: Icon(Icons.account_balance_wallet),
+                            label: Text('Finance'),
+                          ),
+                        ],
+                      ),
+                      const VerticalDivider(width: 1),
+                      Expanded(
+                        child: ContentConstraint(
+                          maxContentWidth: 1200,
+                          child: IndexedStack(
+                            index: _currentIndex,
+                            children: tabs,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+
+          // Phone: standard layout
+          return Column(
+            children: [
+              const OfflineBanner(),
+              CriticalAlertBanner(
+                accountId: accountId,
+                onViewActions: () {
+                  setState(() => _currentIndex = 0);
+                },
+              ),
+              Expanded(
+                child: IndexedStack(
+                  index: _currentIndex,
+                  children: tabs,
+                ),
+              ),
+            ],
+          );
+        },
       ),
       // Persistent recording FAB — visible on ALL tabs
       floatingActionButton: AnimatedBuilder(
@@ -469,7 +571,7 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
                         ? Colors.red
                         : _isUploading
                             ? Colors.grey
-                            : const Color(0xFFFFCA28),
+                            : AppTheme.accentAmberLight,
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
@@ -501,7 +603,10 @@ class _ManagerDashboardClassicState extends State<ManagerDashboardClassic>
         },
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: CustomBottomNav(
+      // UX-audit #2: Hide bottom nav on tablet (NavigationRail used instead)
+      bottomNavigationBar: MediaQuery.of(context).size.width >= Breakpoints.tablet
+          ? null
+          : CustomBottomNav(
         currentIndex: _currentIndex,
         onTabSelected: (index) {
           if (index != 2) {

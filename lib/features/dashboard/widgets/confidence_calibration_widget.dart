@@ -735,6 +735,7 @@ class _GlossaryManagerSheetState extends State<_GlossaryManagerSheet> {
                                       color: AppTheme.errorRed),
                                   onPressed: () => _deleteTerm(
                                       term['id']?.toString() ?? ''),
+                                  tooltip: 'Delete term', // UX-audit #21
                                 ),
                               ],
                             ),

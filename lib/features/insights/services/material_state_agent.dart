@@ -109,7 +109,9 @@ class MaterialStateAgent {
       final plannedQty = (boq['planned_quantity'] as num?)?.toDouble() ?? 0;
       final consumedQty = (boq['consumed_quantity'] as num?)?.toDouble() ?? 0;
       final budgetedRate = (boq['budgeted_rate'] as num?)?.toDouble() ?? 0;
-      final budgetedTotal = (boq['budgeted_total'] as num?)?.toDouble() ?? (budgetedRate * plannedQty);
+      // Always compute budgeted_total from its inputs — the stored column can be stale
+      // if planned_quantity or budgeted_rate was updated without recalculating the product.
+      final budgetedTotal = budgetedRate * plannedQty;
       final actualCost = (boq['actual_spend'] as num?)?.toDouble() ?? 0;
       final status = boq['status']?.toString() ?? 'planned';
       final materialName = boq['material_name']?.toString() ?? 'Unknown';

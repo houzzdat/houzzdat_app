@@ -43,7 +43,7 @@ class _FinanceTabState extends State<FinanceTab>
         FinanceOverviewCard(accountId: widget.accountId!),
         // Sub-tab bar
         Container(
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: TabBar(
             controller: _tabController,
             labelColor: AppTheme.primaryIndigo,
@@ -64,7 +64,7 @@ class _FinanceTabState extends State<FinanceTab>
             ],
           ),
         ),
-        const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
         Expanded(
           child: TabBarView(
             controller: _tabController,

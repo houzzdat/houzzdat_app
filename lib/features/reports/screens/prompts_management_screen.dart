@@ -131,7 +131,6 @@ class _PromptsManagementScreenState extends State<PromptsManagementScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: const Text('AI Report Prompts', style: TextStyle(fontSize: 16)),
         backgroundColor: AppTheme.primaryIndigo,
@@ -216,6 +215,7 @@ class _PromptsManagementScreenState extends State<PromptsManagementScreen> {
                           trailing: IconButton(
                             icon: const Icon(Icons.edit, size: 20, color: AppTheme.primaryIndigo),
                             onPressed: () => _editPrompt(prompt),
+                            tooltip: 'Edit prompt', // UX-audit #21
                           ),
                           onTap: () => _editPrompt(prompt),
                         ),
@@ -287,6 +287,7 @@ class _EditPromptDialogState extends State<_EditPromptDialog> {
                 IconButton(
                   icon: const Icon(Icons.close, size: 20),
                   onPressed: () => Navigator.pop(context),
+                  tooltip: 'Close', // UX-audit #21
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                 ),

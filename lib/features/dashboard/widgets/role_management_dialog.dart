@@ -319,6 +319,7 @@ class _RoleManagementDialogState extends State<RoleManagementDialog> {
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white),
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Close', // UX-audit #21
                   ),
                 ],
               ),

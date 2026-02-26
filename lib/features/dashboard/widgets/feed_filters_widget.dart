@@ -30,7 +30,7 @@ class FeedFiltersWidget extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.all(AppTheme.spacingM),
-      color: AppTheme.cardWhite,
+      color: Theme.of(context).cardColor,
       child: Column(
         children: [
           // Dropdowns Row

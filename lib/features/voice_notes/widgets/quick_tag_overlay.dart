@@ -142,7 +142,7 @@ class _QuickTagOverlayState extends State<QuickTagOverlay>
     return Container(
       margin: const EdgeInsets.all(AppTheme.spacingM),
       decoration: BoxDecoration(
-        color: AppTheme.cardWhite,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(AppTheme.radiusXL),
         boxShadow: [
           BoxShadow(

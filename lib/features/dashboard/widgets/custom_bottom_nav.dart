@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 
 class CustomBottomNav extends StatelessWidget {
@@ -14,12 +15,13 @@ class CustomBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BottomAppBar(
-      color: Colors.white,
+      color: Theme.of(context).cardColor,
       elevation: 8,
+      padding: EdgeInsets.zero, // fix 3px overflow — remove default M3 internal padding
       shape: const CircularNotchedRectangle(),
       notchMargin: 8.0,
       child: SizedBox(
-        height: 65,
+        height: 60,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
@@ -30,12 +32,12 @@ class CustomBottomNav extends StatelessWidget {
               onTap: () => onTabSelected(0),
             ),
             _NavItem(
-              icon: Icons.business_rounded,
-              label: 'Sites',
+              icon: Icons.insights,
+              label: 'Insights',
               isActive: currentIndex == 1,
               onTap: () => onTabSelected(1),
             ),
-            const SizedBox(width: 80), // Space for FAB
+            const SizedBox(width: 60), // Space for FAB
             _NavItem(
               icon: Icons.people_rounded,
               label: 'Users',
@@ -47,6 +49,12 @@ class CustomBottomNav extends StatelessWidget {
               label: 'Finance',
               isActive: currentIndex == 4,
               onTap: () => onTabSelected(4),
+            ),
+            _NavItem(
+              icon: LucideIcons.folderOpen,
+              label: 'Docs',
+              isActive: currentIndex == 5,
+              onTap: () => onTabSelected(5),
             ),
           ],
         ),
@@ -75,8 +83,8 @@ class _NavItem extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppTheme.radiusM),
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppTheme.spacingM,
-          vertical: 6,
+          horizontal: AppTheme.spacingS,
+          vertical: 4, // tighter to fit 60dp bar without overflow
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,

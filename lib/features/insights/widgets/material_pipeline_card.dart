@@ -97,7 +97,7 @@ class MaterialPipelineCard extends StatelessWidget {
       ('Planned', state.planned, const Color(0xFF1565C0)),
       ('Ordered', state.ordered, const Color(0xFFEF6C00)),
       ('Delivered', state.delivered, const Color(0xFF2E7D32)),
-      ('Installed', state.installed, const Color(0xFF1A237E)),
+      ('Installed', state.installed, AppTheme.primaryIndigo),
     ];
 
     return Row(

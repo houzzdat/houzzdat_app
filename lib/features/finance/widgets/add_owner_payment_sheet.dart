@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
+import 'package:houzzdat_app/core/widgets/input_formatters.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
 import 'package:intl/intl.dart';
 
 /// Bottom sheet form for recording a payment received from the owner.
@@ -22,7 +24,6 @@ class AddOwnerPaymentSheet extends StatefulWidget {
     return showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXL)),
       ),
@@ -79,13 +80,13 @@ class _AddOwnerPaymentSheetState extends State<AddOwnerPaymentSheet> {
     }
 
     final data = {
-      'amount': double.tryParse(_amountController.text.trim()) ?? 0,
+      'amount': double.tryParse(_amountController.text.trim().replaceAll(',', '')) ?? 0,
       'owner_id': _selectedOwnerId,
       'payment_method': _paymentMethod,
       'reference_number': _refController.text.trim(),
       'description': _descriptionController.text.trim(),
       'project_id': _selectedProjectId,
-      'allocated_to_project': _selectedProjectId,
+      // allocated_to_project removed — fully redundant with project_id
       'received_date': _receivedDate.toIso8601String().split('T').first,
     };
 
@@ -104,7 +105,9 @@ class _AddOwnerPaymentSheetState extends State<AddOwnerPaymentSheet> {
         bottom: bottomInset + AppTheme.spacingM,
       ),
       child: SingleChildScrollView(
-        child: Form(
+        child: FocusTraversalGroup(
+          policy: OrderedTraversalPolicy(), // UX-audit #22: logical keyboard nav order
+          child: Form(
           key: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -133,14 +136,15 @@ class _AddOwnerPaymentSheetState extends State<AddOwnerPaymentSheet> {
               ),
               const SizedBox(height: AppTheme.spacingL),
 
-              // Owner dropdown
-              DropdownButtonFormField<String>(
+              // Owner — UX-audit #14: searchable dropdown for 10+ items
+              SearchableDropdown<String>(
+                label: 'Owner *',
+                hint: 'Select an owner',
                 value: _selectedOwnerId,
-                decoration: _inputDecoration('Owner *'),
                 items: widget.owners
-                    .map((o) => DropdownMenuItem<String>(
-                          value: o['owner_id']?.toString(),
-                          child: Text(o['full_name']?.toString() ?? o['email']?.toString() ?? 'Owner'),
+                    .map((o) => SearchableDropdownItem<String>(
+                          value: o['owner_id']?.toString() ?? '',
+                          label: o['full_name']?.toString() ?? o['email']?.toString() ?? 'Owner',
                         ))
                     .toList(),
                 onChanged: (v) => setState(() => _selectedOwnerId = v),
@@ -153,12 +157,13 @@ class _AddOwnerPaymentSheetState extends State<AddOwnerPaymentSheet> {
                 decoration: _inputDecoration('Amount (\u20B9) *'),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
                   _SingleDecimalFormatter(),
+                  IndianNumberFormatter(), // UX-audit #13: live currency formatting
                 ],
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) return 'Required';
-                  final amount = double.tryParse(v.trim());
+                  final amount = double.tryParse(v.trim().replaceAll(',', ''));
                   if (amount == null) return 'Invalid amount';
                   if (amount <= 0) return 'Amount must be greater than zero';
                   return null;
@@ -246,6 +251,7 @@ class _AddOwnerPaymentSheetState extends State<AddOwnerPaymentSheet> {
             ],
           ),
         ),
+        ),
       ),
     );
   }
@@ -259,7 +265,7 @@ class _AddOwnerPaymentSheetState extends State<AddOwnerPaymentSheet> {
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusM),
-        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+        borderSide: const BorderSide(color: AppTheme.dividerColor),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusM),

@@ -54,7 +54,11 @@ class _ReviewTabContentState extends State<ReviewTabContent> {
 
   Future<void> _handleConfirm(ReviewItem item) async {
     try {
-      await _service.confirmRecord(item.table, item.id);
+      await _service.confirmRecord(
+        item.table,
+        item.id,
+        isDuplicate: item.isPossibleDuplicate,
+      );
       _removeItem(item);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

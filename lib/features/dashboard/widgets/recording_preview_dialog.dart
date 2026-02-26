@@ -1,8 +1,15 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 
-/// Dialog shown after recording stops, allowing playback preview before submit.
+/// UX-audit TL-03: Dialog shown after recording stops, allowing playback
+/// preview before submit. Now includes audio playback so managers can listen
+/// before deciding to submit or discard.
+///
 /// Returns `true` if the user confirms, `false`/null if discarded.
 class RecordingPreviewDialog extends StatefulWidget {
   final Uint8List audioBytes;
@@ -21,6 +28,91 @@ class RecordingPreviewDialog extends StatefulWidget {
 }
 
 class _RecordingPreviewDialogState extends State<RecordingPreviewDialog> {
+  final AudioPlayer _player = AudioPlayer();
+  bool _isPlaying = false;
+  bool _isPlayerReady = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  String? _tempFilePath;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupPlayer();
+  }
+
+  Future<void> _setupPlayer() async {
+    try {
+      // Write bytes to temp file for playback
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/preview_${DateTime.now().millisecondsSinceEpoch}.m4a');
+      await tempFile.writeAsBytes(widget.audioBytes);
+      _tempFilePath = tempFile.path;
+
+      // Set up listeners
+      _player.onDurationChanged.listen((d) {
+        if (mounted) setState(() => _duration = d);
+      });
+      _player.onPositionChanged.listen((p) {
+        if (mounted) setState(() => _position = p);
+      });
+      _player.onPlayerComplete.listen((_) {
+        if (mounted) {
+          setState(() {
+            _isPlaying = false;
+            _position = Duration.zero;
+          });
+        }
+      });
+
+      // Set the source
+      await _player.setSource(DeviceFileSource(tempFile.path));
+
+      if (mounted) {
+        setState(() => _isPlayerReady = true);
+      }
+    } catch (e) {
+      debugPrint('Error setting up audio preview: $e');
+      // Player setup failed — dialog still works, just no playback
+      if (mounted) setState(() => _isPlayerReady = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    // Clean up temp file
+    if (_tempFilePath != null) {
+      File(_tempFilePath!).delete().catchError((e) {
+        debugPrint('Error cleaning temp preview file: $e');
+        return File('');
+      });
+    }
+    super.dispose();
+  }
+
+  Future<void> _togglePlayback() async {
+    try {
+      if (_isPlaying) {
+        await _player.pause();
+        if (mounted) setState(() => _isPlaying = false);
+      } else {
+        await _player.resume();
+        if (mounted) setState(() => _isPlaying = true);
+      }
+    } catch (e) {
+      debugPrint('Playback toggle error: $e');
+    }
+  }
+
+  Future<void> _seekTo(Duration position) async {
+    try {
+      await _player.seek(position);
+    } catch (e) {
+      debugPrint('Seek error: $e');
+    }
+  }
+
   String _formatDuration(Duration d) {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -35,6 +127,9 @@ class _RecordingPreviewDialogState extends State<RecordingPreviewDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // Use known recording duration if player hasn't reported one yet
+    final displayDuration = _duration > Duration.zero ? _duration : widget.recordingDuration;
+
     return AlertDialog(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusXL),
@@ -81,7 +176,82 @@ class _RecordingPreviewDialogState extends State<RecordingPreviewDialog> {
             const SizedBox(height: 12),
           ],
 
-          // Info card
+          // Audio playback section — UX-audit TL-03
+          if (_isPlayerReady) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryIndigo.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(AppTheme.radiusM),
+                border: Border.all(color: AppTheme.primaryIndigo.withValues(alpha: 0.15)),
+              ),
+              child: Column(
+                children: [
+                  // Play button + slider
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                          size: 40,
+                          color: AppTheme.primaryIndigo,
+                        ),
+                        onPressed: _togglePlayback,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        tooltip: _isPlaying ? 'Pause' : 'Play preview',
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 4,
+                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                            activeTrackColor: AppTheme.primaryIndigo,
+                            inactiveTrackColor: AppTheme.textSecondary.withValues(alpha: 0.2),
+                            thumbColor: AppTheme.primaryIndigo,
+                          ),
+                          child: Slider(
+                            value: _position.inMilliseconds.toDouble().clamp(
+                              0.0,
+                              displayDuration.inMilliseconds.toDouble().clamp(1.0, double.infinity),
+                            ),
+                            max: displayDuration.inMilliseconds.toDouble() > 0
+                                ? displayDuration.inMilliseconds.toDouble()
+                                : 1.0,
+                            onChanged: (value) {
+                              _seekTo(Duration(milliseconds: value.toInt()));
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  // Time labels
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 48),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _formatDuration(_position),
+                          style: AppTheme.caption.copyWith(color: AppTheme.textSecondary),
+                        ),
+                        Text(
+                          _formatDuration(displayDuration),
+                          style: AppTheme.caption.copyWith(color: AppTheme.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // Info card (duration + size)
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -112,7 +282,9 @@ class _RecordingPreviewDialogState extends State<RecordingPreviewDialog> {
           const SizedBox(height: 16),
 
           Text(
-            'Submit this voice note or discard and re-record?',
+            _isPlayerReady
+                ? 'Listen to your recording, then submit or discard.'
+                : 'Submit this voice note or discard and re-record?',
             style: AppTheme.bodySmall.copyWith(
               color: AppTheme.textSecondary,
             ),
@@ -122,7 +294,10 @@ class _RecordingPreviewDialogState extends State<RecordingPreviewDialog> {
       ),
       actions: [
         TextButton.icon(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () {
+            HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
+            Navigator.pop(context, false);
+          },
           icon: const Icon(Icons.delete_outline, size: 18),
           label: const Text('Discard'),
           style: TextButton.styleFrom(
@@ -130,7 +305,10 @@ class _RecordingPreviewDialogState extends State<RecordingPreviewDialog> {
           ),
         ),
         ElevatedButton.icon(
-          onPressed: () => Navigator.pop(context, true),
+          onPressed: () {
+            HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
+            Navigator.pop(context, true);
+          },
           icon: const Icon(Icons.send, size: 18),
           label: const Text('Submit'),
           style: ElevatedButton.styleFrom(

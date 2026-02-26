@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
+import 'package:houzzdat_app/core/widgets/input_formatters.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
 import 'package:intl/intl.dart';
 
 /// Bottom sheet form for creating a new invoice.
@@ -17,7 +19,6 @@ class AddInvoiceSheet extends StatefulWidget {
     return showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXL)),
       ),
@@ -71,17 +72,11 @@ class _AddInvoiceSheetState extends State<AddInvoiceSheet> {
 
   void _handleSubmit() {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedProjectId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a site')),
-      );
-      return;
-    }
 
     final data = {
       'invoice_number': _invoiceNumberController.text.trim(),
       'vendor': _vendorController.text.trim(),
-      'amount': double.tryParse(_amountController.text.trim()) ?? 0,
+      'amount': double.tryParse(_amountController.text.trim().replaceAll(',', '')) ?? 0,
       'description': _descriptionController.text.trim(),
       'notes': _notesController.text.trim(),
       'project_id': _selectedProjectId,
@@ -104,7 +99,9 @@ class _AddInvoiceSheetState extends State<AddInvoiceSheet> {
         bottom: bottomInset + AppTheme.spacingM,
       ),
       child: SingleChildScrollView(
-        child: Form(
+        child: FocusTraversalGroup(
+          policy: OrderedTraversalPolicy(), // UX-audit #22: logical keyboard nav order
+          child: Form(
           key: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -134,18 +131,23 @@ class _AddInvoiceSheetState extends State<AddInvoiceSheet> {
               ),
               const SizedBox(height: AppTheme.spacingL),
 
-              // Invoice Number
+              // Invoice Number — UX-audit CI-11: input validation
               TextFormField(
                 controller: _invoiceNumberController,
                 decoration: _inputDecoration('Invoice Number *'),
+                maxLength: 50,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9\-\/# ]')),
+                ],
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: AppTheme.spacingM),
 
-              // Vendor
+              // Vendor — UX-audit CI-11: input validation
               TextFormField(
                 controller: _vendorController,
                 decoration: _inputDecoration('Vendor / Supplier *'),
+                maxLength: 100,
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: AppTheme.spacingM),
@@ -156,12 +158,13 @@ class _AddInvoiceSheetState extends State<AddInvoiceSheet> {
                 decoration: _inputDecoration('Amount (\u20B9) *'),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
                   _SingleDecimalFormatter(),
+                  IndianNumberFormatter(), // UX-audit #13: live currency formatting
                 ],
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) return 'Required';
-                  final amount = double.tryParse(v.trim());
+                  final amount = double.tryParse(v.trim().replaceAll(',', ''));
                   if (amount == null) return 'Invalid amount';
                   if (amount <= 0) return 'Amount must be greater than zero';
                   return null;
@@ -169,17 +172,19 @@ class _AddInvoiceSheetState extends State<AddInvoiceSheet> {
               ),
               const SizedBox(height: AppTheme.spacingM),
 
-              // Site dropdown
-              DropdownButtonFormField<String>(
+              // Site dropdown — UX-audit #14: searchable dropdown for 10+ items
+              SearchableDropdown<String>(
+                label: 'Site *',
+                hint: 'Select a site',
                 value: _selectedProjectId,
-                decoration: _inputDecoration('Site *'),
                 items: widget.projects
-                    .map((p) => DropdownMenuItem<String>(
-                          value: p['id']?.toString(),
-                          child: Text(p['name']?.toString() ?? 'Site'),
+                    .map((p) => SearchableDropdownItem<String>(
+                          value: p['id']?.toString() ?? '',
+                          label: p['name']?.toString() ?? 'Site',
                         ))
                     .toList(),
                 onChanged: (v) => setState(() => _selectedProjectId = v),
+                validator: (v) => v == null ? 'Please select a site' : null,
               ),
               const SizedBox(height: AppTheme.spacingM),
 
@@ -206,19 +211,21 @@ class _AddInvoiceSheetState extends State<AddInvoiceSheet> {
               ),
               const SizedBox(height: AppTheme.spacingM),
 
-              // Description
+              // Description — UX-audit CI-11: input validation
               TextFormField(
                 controller: _descriptionController,
                 decoration: _inputDecoration('Description'),
                 maxLines: 3,
+                maxLength: 500,
               ),
               const SizedBox(height: AppTheme.spacingM),
 
-              // Notes
+              // Notes — UX-audit CI-11: input validation
               TextFormField(
                 controller: _notesController,
                 decoration: _inputDecoration('Notes'),
                 maxLines: 2,
+                maxLength: 300,
               ),
               const SizedBox(height: AppTheme.spacingM),
 
@@ -254,6 +261,7 @@ class _AddInvoiceSheetState extends State<AddInvoiceSheet> {
             ],
           ),
         ),
+        ),
       ),
     );
   }
@@ -267,7 +275,7 @@ class _AddInvoiceSheetState extends State<AddInvoiceSheet> {
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusM),
-        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+        borderSide: const BorderSide(color: AppTheme.dividerColor),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusM),

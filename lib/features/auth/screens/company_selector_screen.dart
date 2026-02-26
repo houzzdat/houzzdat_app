@@ -102,7 +102,6 @@ class _CompanySelectorScreenState extends State<CompanySelectorScreen> {
     final companies = _companyService.activeCompanies;
 
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: const Text('Select Company'),
         backgroundColor: AppTheme.primaryIndigo,

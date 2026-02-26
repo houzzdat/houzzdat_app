@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
+import 'package:houzzdat_app/core/widgets/input_formatters.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
 
 /// Bottom sheet form for creating a fund request to the owner.
 class AddFundRequestSheet extends StatefulWidget {
@@ -21,7 +23,6 @@ class AddFundRequestSheet extends StatefulWidget {
     return showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXL)),
       ),
@@ -53,23 +54,11 @@ class _AddFundRequestSheetState extends State<AddFundRequestSheet> {
 
   void _handleSubmit() {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedProjectId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a site')),
-      );
-      return;
-    }
-    if (_selectedOwnerId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select an owner')),
-      );
-      return;
-    }
 
     final data = {
       'title': _titleController.text.trim(),
       'description': _descriptionController.text.trim(),
-      'amount': double.tryParse(_amountController.text.trim()) ?? 0,
+      'amount': double.tryParse(_amountController.text.trim().replaceAll(',', '')) ?? 0,
       'project_id': _selectedProjectId,
       'owner_id': _selectedOwnerId,
       'urgency': _urgency,
@@ -90,7 +79,9 @@ class _AddFundRequestSheetState extends State<AddFundRequestSheet> {
         bottom: bottomInset + AppTheme.spacingM,
       ),
       child: SingleChildScrollView(
-        child: Form(
+        child: FocusTraversalGroup(
+          policy: OrderedTraversalPolicy(), // UX-audit #22: logical keyboard nav order
+          child: Form(
           key: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -119,10 +110,11 @@ class _AddFundRequestSheetState extends State<AddFundRequestSheet> {
               ),
               const SizedBox(height: AppTheme.spacingL),
 
-              // Title
+              // Title — UX-audit CI-11: input validation
               TextFormField(
                 controller: _titleController,
                 decoration: _inputDecoration('Title *'),
+                maxLength: 100,
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: AppTheme.spacingM),
@@ -133,12 +125,13 @@ class _AddFundRequestSheetState extends State<AddFundRequestSheet> {
                 decoration: _inputDecoration('Amount (\u20B9) *'),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
                   _SingleDecimalFormatter(),
+                  IndianNumberFormatter(), // UX-audit #13: live currency formatting
                 ],
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) return 'Required';
-                  final amount = double.tryParse(v.trim());
+                  final amount = double.tryParse(v.trim().replaceAll(',', ''));
                   if (amount == null) return 'Invalid amount';
                   if (amount <= 0) return 'Amount must be greater than zero';
                   return null;
@@ -146,31 +139,35 @@ class _AddFundRequestSheetState extends State<AddFundRequestSheet> {
               ),
               const SizedBox(height: AppTheme.spacingM),
 
-              // Site
-              DropdownButtonFormField<String>(
+              // Site — UX-audit #14: searchable dropdown for 10+ items
+              SearchableDropdown<String>(
+                label: 'Site *',
+                hint: 'Select a site',
                 value: _selectedProjectId,
-                decoration: _inputDecoration('Site *'),
                 items: widget.projects
-                    .map((p) => DropdownMenuItem<String>(
-                          value: p['id']?.toString(),
-                          child: Text(p['name']?.toString() ?? 'Site'),
+                    .map((p) => SearchableDropdownItem<String>(
+                          value: p['id']?.toString() ?? '',
+                          label: p['name']?.toString() ?? 'Site',
                         ))
                     .toList(),
                 onChanged: (v) => setState(() => _selectedProjectId = v),
+                validator: (v) => v == null ? 'Please select a site' : null,
               ),
               const SizedBox(height: AppTheme.spacingM),
 
-              // Owner
-              DropdownButtonFormField<String>(
+              // Owner — UX-audit #14: searchable dropdown for 10+ items
+              SearchableDropdown<String>(
+                label: 'Owner *',
+                hint: 'Select an owner',
                 value: _selectedOwnerId,
-                decoration: _inputDecoration('Owner *'),
                 items: widget.owners
-                    .map((o) => DropdownMenuItem<String>(
-                          value: o['owner_id']?.toString(),
-                          child: Text(o['full_name']?.toString() ?? o['email']?.toString() ?? 'Owner'),
+                    .map((o) => SearchableDropdownItem<String>(
+                          value: o['owner_id']?.toString() ?? '',
+                          label: o['full_name']?.toString() ?? o['email']?.toString() ?? 'Owner',
                         ))
                     .toList(),
                 onChanged: (v) => setState(() => _selectedOwnerId = v),
+                validator: (v) => v == null ? 'Please select an owner' : null,
               ),
               const SizedBox(height: AppTheme.spacingM),
 
@@ -188,11 +185,12 @@ class _AddFundRequestSheetState extends State<AddFundRequestSheet> {
               ),
               const SizedBox(height: AppTheme.spacingM),
 
-              // Description
+              // Description — UX-audit CI-11: input validation
               TextFormField(
                 controller: _descriptionController,
                 decoration: _inputDecoration('Description'),
                 maxLines: 3,
+                maxLength: 500,
               ),
               const SizedBox(height: AppTheme.spacingL),
 
@@ -215,6 +213,7 @@ class _AddFundRequestSheetState extends State<AddFundRequestSheet> {
             ],
           ),
         ),
+        ),
       ),
     );
   }
@@ -228,7 +227,7 @@ class _AddFundRequestSheetState extends State<AddFundRequestSheet> {
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusM),
-        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+        borderSide: const BorderSide(color: AppTheme.dividerColor),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusM),

@@ -43,7 +43,6 @@ class _ManagerSiteDetailScreenState extends State<ManagerSiteDetailScreen>
     final projectName = widget.project['name']?.toString() ?? 'Site';
 
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: Text(projectName),
         backgroundColor: AppTheme.primaryIndigo,
@@ -374,7 +373,9 @@ class _SummaryTabState extends State<_SummaryTab> {
                       timeLabel =
                           DateFormat('d MMM').format(dt);
                     }
-                  } catch (_) {}
+                  } catch (e) {
+                    debugPrint('Error parsing action time: $e');
+                  }
                 }
 
                 return Card(
@@ -438,9 +439,9 @@ class _SummaryTabState extends State<_SummaryTab> {
     return Container(
       padding: const EdgeInsets.all(AppTheme.spacingM),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(AppTheme.radiusL),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: AppTheme.dividerColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -762,7 +763,9 @@ class _DailyReportsTabState extends State<_DailyReportsTab> {
               newNames[uid] =
                   user['full_name']?.toString() ?? user['email']?.toString() ?? 'User';
             }
-          } catch (_) {}
+          } catch (e) {
+            debugPrint('Error loading user name: $e');
+          }
         }
       }
 
@@ -852,7 +855,7 @@ class _DailyReportsTabState extends State<_DailyReportsTab> {
             horizontal: AppTheme.spacingM,
             vertical: AppTheme.spacingS,
           ),
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: Row(
             children: [
               // From date
@@ -900,7 +903,7 @@ class _DailyReportsTabState extends State<_DailyReportsTab> {
             ],
           ),
         ),
-        const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
 
         // Voice notes list
         Expanded(
@@ -941,7 +944,8 @@ class _DailyReportsTabState extends State<_DailyReportsTab> {
         final dateKey = DateFormat('yyyy-MM-dd').format(dt);
         grouped.putIfAbsent(dateKey, () => []);
         grouped[dateKey]!.add(note);
-      } catch (_) {
+      } catch (e) {
+        debugPrint('Error parsing voice note date: $e');
         grouped.putIfAbsent('unknown', () => []);
         grouped['unknown']!.add(note);
       }
@@ -972,7 +976,8 @@ class _DailyReportsTabState extends State<_DailyReportsTab> {
             } else {
               dateHeader = DateFormat('EEEE, d MMM yyyy').format(dt);
             }
-          } catch (_) {
+          } catch (e) {
+            debugPrint('Error parsing date header: $e');
             dateHeader = dateKey;
           }
 

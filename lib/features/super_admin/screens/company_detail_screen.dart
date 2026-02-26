@@ -128,7 +128,6 @@ class _CompanyDetailScreenState extends State<CompanyDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: Text(widget.companyName),
         backgroundColor: AppTheme.primaryIndigo,

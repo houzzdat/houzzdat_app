@@ -201,7 +201,8 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
                     decoration: InputDecoration(
                       filled: true,
                       fillColor: Colors.white,
-                      hintText: 'New Password',
+                      labelText: 'New Password', // UX-audit #12: explicit label
+                      hintText: 'Min 6 characters',
                       prefixIcon: const Icon(Icons.lock_outlined),
                       suffixIcon: IconButton(
                         icon: Icon(
@@ -213,6 +214,7 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
                         onPressed: () {
                           setState(() => _obscurePassword = !_obscurePassword);
                         },
+                        tooltip: _obscurePassword ? 'Show password' : 'Hide password', // UX-audit #21
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(AppTheme.radiusM),
@@ -234,7 +236,8 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
                     decoration: InputDecoration(
                       filled: true,
                       fillColor: Colors.white,
-                      hintText: 'Confirm Password',
+                      labelText: 'Confirm Password', // UX-audit #12: explicit label
+                      hintText: 'Re-enter password',
                       prefixIcon: const Icon(Icons.lock_outlined),
                       suffixIcon: IconButton(
                         icon: Icon(
@@ -246,6 +249,7 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
                         onPressed: () {
                           setState(() => _obscureConfirm = !_obscureConfirm);
                         },
+                        tooltip: _obscureConfirm ? 'Show password' : 'Hide password', // UX-audit #21
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(AppTheme.radiusM),

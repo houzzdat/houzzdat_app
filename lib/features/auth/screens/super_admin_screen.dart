@@ -142,7 +142,6 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: const Text('Super Admin Panel'),
         backgroundColor: AppTheme.primaryIndigo,

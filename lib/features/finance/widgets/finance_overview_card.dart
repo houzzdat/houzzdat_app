@@ -53,7 +53,7 @@ class _FinanceOverviewCardState extends State<FinanceOverviewCard> {
         // Pending invoices
         _supabase
             .from('invoices')
-            .select('total_amount, status')
+            .select('amount, status')
             .eq('account_id', widget.accountId)
             .inFilter('status', ['submitted', 'draft']),
         // Pending fund requests
@@ -80,7 +80,7 @@ class _FinanceOverviewCardState extends State<FinanceOverviewCard> {
       final invoiceList = results[3] as List;
       double invAmount = 0;
       for (final inv in invoiceList) {
-        invAmount += (inv['total_amount'] as num?)?.toDouble() ?? 0;
+        invAmount += (inv['amount'] as num?)?.toDouble() ?? 0;
       }
 
       final fundList = results[4] as List;
@@ -128,21 +128,15 @@ class _FinanceOverviewCardState extends State<FinanceOverviewCard> {
     final netPosition = _totalReceived - _totalSpent;
     final isPositive = netPosition >= 0;
 
-    return Container(
+    return Card( // UX-audit #19: standardized Card elevation instead of custom BoxShadow
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      elevation: AppTheme.elevationLow,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        side: BorderSide(color: Colors.grey.shade200),
       ),
+      child: Padding(
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -199,6 +193,7 @@ class _FinanceOverviewCardState extends State<FinanceOverviewCard> {
             ),
           ],
         ],
+      ),
       ),
     );
   }

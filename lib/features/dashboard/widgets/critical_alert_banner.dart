@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/instruct_voice_dialog.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
 
 /// Persistent red gradient banner for critical/safety items.
 /// Shows max 3 items stacked with "+N more" overflow.
@@ -23,6 +24,7 @@ class CriticalAlertBanner extends StatefulWidget {
 class _CriticalAlertBannerState extends State<CriticalAlertBanner> {
   final _supabase = Supabase.instance.client;
   List<Map<String, dynamic>> _criticalItems = [];
+  RealtimeChannel? _channel; // UX-audit CI-12: store channel reference for proper cleanup
 
   @override
   void initState() {
@@ -32,7 +34,7 @@ class _CriticalAlertBannerState extends State<CriticalAlertBanner> {
   }
 
   void _subscribeToChanges() {
-    _supabase
+    _channel = _supabase
         .channel('critical_alert_changes')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
@@ -44,8 +46,8 @@ class _CriticalAlertBannerState extends State<CriticalAlertBanner> {
             value: widget.accountId,
           ),
           callback: (payload) => _loadCriticalItems(),
-        )
-        .subscribe();
+        );
+    _channel!.subscribe();
   }
 
   Future<void> _loadCriticalItems() async {
@@ -73,9 +75,8 @@ class _CriticalAlertBannerState extends State<CriticalAlertBanner> {
   void _handleInstructNow(Map<String, dynamic> item) {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (context) => InstructVoiceDialog(actionItem: item),
+      FadeSlideRoute(
+        page: InstructVoiceDialog(actionItem: item),
       ),
     );
   }
@@ -188,7 +189,7 @@ class _CriticalAlertBannerState extends State<CriticalAlertBanner> {
 
   @override
   void dispose() {
-    _supabase.removeChannel(_supabase.channel('critical_alert_changes'));
+    _channel?.unsubscribe(); // UX-audit CI-12: proper cleanup via stored reference
     super.dispose();
   }
 }

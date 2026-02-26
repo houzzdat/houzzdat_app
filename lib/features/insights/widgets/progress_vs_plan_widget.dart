@@ -40,9 +40,9 @@ class ProgressVsPlanWidget extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade200),
+            border: Border.all(color: Theme.of(context).dividerColor),
           ),
           child: Column(
             children: [
@@ -92,7 +92,7 @@ class ProgressVsPlanWidget extends StatelessWidget {
         ),
 
         // Milestone list
-        ...milestones.map(_buildMilestoneRow),
+        ...milestones.map((ms) => _buildMilestoneRow(context, ms)),
       ],
     );
   }
@@ -140,7 +140,7 @@ class ProgressVsPlanWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildMilestoneRow(MilestoneSnapshot ms) {
+  Widget _buildMilestoneRow(BuildContext context, MilestoneSnapshot ms) {
     final statusConfig = _getStatusConfig(ms.status);
     final dateFormat = DateFormat('MMM d');
 
@@ -148,9 +148,9 @@ class ProgressVsPlanWidget extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

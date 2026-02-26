@@ -70,7 +70,9 @@ class InvoiceCard extends StatelessWidget {
     if (dueDateStr != null && dueDateStr.isNotEmpty) {
       try {
         dueDate = DateTime.parse(dueDateStr);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Error parsing invoice due date: $e');
+      }
     }
 
     final statusColor = _statusColor(status);
@@ -80,26 +82,20 @@ class InvoiceCard extends StatelessWidget {
     );
     final paymentProgress = amount > 0 ? (totalPaid / amount).clamp(0.0, 1.0) : 0.0;
 
+    // UX-audit #19: standardized Card elevation instead of custom BoxShadow
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: Card(
         margin: const EdgeInsets.symmetric(
           horizontal: AppTheme.spacingM,
           vertical: AppTheme.spacingXS,
         ),
-        decoration: BoxDecoration(
-          color: Colors.white,
+        elevation: AppTheme.elevationLow,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusL),
-          border: Border.all(
-            color: isExpanded ? statusColor.withValues(alpha: 0.4) : const Color(0xFFE0E0E0),
+          side: BorderSide(
+            color: isExpanded ? statusColor.withValues(alpha: 0.4) : AppTheme.dividerColor,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -408,7 +404,9 @@ class _PaymentHistoryItem extends StatelessWidget {
     if (dateStr != null) {
       try {
         dateLabel = _dateFormat.format(DateTime.parse(dateStr));
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Error parsing payment date: $e');
+      }
     }
 
     return Padding(

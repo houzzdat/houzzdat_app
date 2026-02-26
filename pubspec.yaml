@@ -44,6 +44,11 @@ dependencies:
   url_launcher: ^6.2.5
   # Share files (WhatsApp PDF sharing)
   share_plus: ^10.1.4
+  # UX-audit PP-03: Data visualizations for owner dashboard
+  fl_chart: ^0.69.2
+  # CI-06: Riverpod state management
+  flutter_riverpod: ^2.6.1
+  go_router: ^17.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

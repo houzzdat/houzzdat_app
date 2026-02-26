@@ -1,6 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
 
@@ -36,14 +40,28 @@ class _ReplyVoiceDialogState extends State<ReplyVoiceDialog> {
   Uint8List? _recordedBytes;
   bool _useTextReply = false;
 
+  // UX-audit TL-11: Playback of recorded reply before sending
+  AudioPlayer? _player;
+  bool _isPlayingPreview = false;
+  String? _tempFilePath;
+
   @override
   void dispose() {
     _timer?.cancel();
     _textController.dispose();
+    _player?.dispose();
+    // Clean up temp file
+    if (_tempFilePath != null) {
+      File(_tempFilePath!).delete().catchError((e) {
+        debugPrint('Error cleaning temp reply file: $e');
+        return File('');
+      });
+    }
     super.dispose();
   }
 
   Future<void> _startRecording() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
     final hasPermission = await _recorder.checkPermission();
     if (!hasPermission) {
       if (mounted) {
@@ -73,6 +91,7 @@ class _ReplyVoiceDialogState extends State<ReplyVoiceDialog> {
   }
 
   Future<void> _stopRecording() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
     _timer?.cancel();
     final bytes = await _recorder.stopRecording();
     setState(() {
@@ -80,6 +99,40 @@ class _ReplyVoiceDialogState extends State<ReplyVoiceDialog> {
       _recordedBytes = bytes;
       _hasRecorded = bytes != null;
     });
+
+    // UX-audit TL-11: Prepare playback after recording
+    if (bytes != null) {
+      try {
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/reply_preview_${DateTime.now().millisecondsSinceEpoch}.m4a');
+        await tempFile.writeAsBytes(bytes);
+        _tempFilePath = tempFile.path;
+        _player?.dispose();
+        _player = AudioPlayer();
+        await _player!.setSource(DeviceFileSource(tempFile.path));
+        _player!.onPlayerComplete.listen((_) {
+          if (mounted) setState(() => _isPlayingPreview = false);
+        });
+      } catch (e) {
+        debugPrint('Error preparing reply playback: $e');
+      }
+    }
+  }
+
+  // UX-audit TL-11: Toggle playback of recorded reply
+  Future<void> _togglePreviewPlayback() async {
+    if (_player == null) return;
+    try {
+      if (_isPlayingPreview) {
+        await _player!.pause();
+        if (mounted) setState(() => _isPlayingPreview = false);
+      } else {
+        await _player!.resume();
+        if (mounted) setState(() => _isPlayingPreview = true);
+      }
+    } catch (e) {
+      debugPrint('Reply playback error: $e');
+    }
   }
 
   void _handleSend() {
@@ -144,6 +197,7 @@ class _ReplyVoiceDialogState extends State<ReplyVoiceDialog> {
                   IconButton(
                     icon: const Icon(Icons.close, size: 20),
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Close', // UX-audit #21
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -283,13 +337,32 @@ class _ReplyVoiceDialogState extends State<ReplyVoiceDialog> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        TextButton.icon(
-                          onPressed: _startRecording,
-                          icon: const Icon(Icons.replay, size: 18),
-                          label: const Text('Re-record'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppTheme.textSecondary,
-                          ),
+                        // UX-audit TL-11: Play/Re-record row
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (_player != null)
+                              TextButton.icon(
+                                onPressed: _togglePreviewPlayback,
+                                icon: Icon(
+                                  _isPlayingPreview ? Icons.pause : Icons.play_arrow,
+                                  size: 18,
+                                ),
+                                label: Text(_isPlayingPreview ? 'Pause' : 'Play'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppTheme.primaryIndigo,
+                                ),
+                              ),
+                            if (_player != null) const SizedBox(width: 8),
+                            TextButton.icon(
+                              onPressed: _startRecording,
+                              icon: const Icon(Icons.replay, size: 18),
+                              label: const Text('Re-record'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: AppTheme.textSecondary,
+                              ),
+                            ),
+                          ],
                         ),
                       ] else ...[
                         // Start button
@@ -314,6 +387,7 @@ class _ReplyVoiceDialogState extends State<ReplyVoiceDialog> {
                 TextField(
                   controller: _textController,
                   maxLines: 4,
+                  maxLength: 500, // UX-audit TL-12: character limit with counter
                   decoration: InputDecoration(
                     hintText: 'Type your reply...',
                     border: OutlineInputBorder(

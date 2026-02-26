@@ -31,36 +31,46 @@ class OwnerPaymentCard extends StatelessWidget {
     final dateStr = payment['received_date']?.toString();
     final isConfirmed = payment['confirmed_by'] != null;
 
+    // UX-audit PP-08: Parse confirmed audit trail
+    final confirmedByName = payment['confirmed_by_user']?['full_name']?.toString()
+        ?? payment['confirmed_by']?.toString();
+    String? confirmedAtLabel;
+    final confirmedAtStr = payment['confirmed_at']?.toString();
+    if (confirmedAtStr != null && confirmedAtStr.isNotEmpty) {
+      try {
+        confirmedAtLabel = _dateFormat.format(DateTime.parse(confirmedAtStr));
+      } catch (e) {
+        debugPrint('Error parsing confirmed_at: $e');
+      }
+    }
+
     String dateLabel = '';
     if (dateStr != null && dateStr.isNotEmpty) {
       try {
         dateLabel = _dateFormat.format(DateTime.parse(dateStr));
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Error parsing payment date: $e');
+      }
     }
 
-    return Container(
+    // UX-audit #19: standardized Card elevation instead of custom BoxShadow
+    return Card(
       margin: const EdgeInsets.symmetric(
         horizontal: AppTheme.spacingM,
         vertical: AppTheme.spacingXS,
       ),
-      padding: const EdgeInsets.all(AppTheme.spacingM),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      elevation: AppTheme.elevationLow,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusL),
-        border: Border.all(
+        side: BorderSide(
           color: isConfirmed
               ? AppTheme.successGreen.withValues(alpha: 0.3)
-              : const Color(0xFFE0E0E0),
+              : AppTheme.dividerColor,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 4,
-            offset: const Offset(0, 1),
-          ),
-        ],
       ),
-      child: Column(
+      child: Padding(
+        padding: const EdgeInsets.all(AppTheme.spacingM),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -164,6 +174,32 @@ class OwnerPaymentCard extends StatelessWidget {
             ),
           ],
 
+          // UX-audit PP-08: Confirmed audit trail (who confirmed and when)
+          if (isConfirmed && (confirmedByName != null || confirmedAtLabel != null)) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(Icons.verified_user, size: 14,
+                    color: AppTheme.successGreen.withValues(alpha: 0.7)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    [
+                      if (confirmedByName != null) 'Confirmed by $confirmedByName',
+                      if (confirmedAtLabel != null) 'on $confirmedAtLabel',
+                    ].join(' '),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.successGreen.withValues(alpha: 0.8),
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+
           // Confirm button
           if (!isConfirmed && onConfirm != null) ...[
             const SizedBox(height: AppTheme.spacingS),
@@ -180,6 +216,7 @@ class OwnerPaymentCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
       ),
     );
   }

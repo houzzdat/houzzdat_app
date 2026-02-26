@@ -56,8 +56,8 @@ class TeamCardWidget extends StatefulWidget {
 }
 
 class _TeamCardWidgetState extends State<TeamCardWidget> {
-  static const Color _avatarBg = Color(0xFFBBDEFB);
-  static const Color _avatarFg = Color(0xFF1565C0);
+  static const Color _avatarBg = AppTheme.avatarBackground;
+  static const Color _avatarFg = AppTheme.avatarForeground; // UX-audit #20
 
   String? _projectName;
 
@@ -75,9 +75,9 @@ class _TeamCardWidgetState extends State<TeamCardWidget> {
           .from('projects')
           .select('name')
           .eq('id', widget.user['current_project_id'])
-          .single();
+          .maybeSingle(); // UX-audit CI-01
 
-      if (mounted) {
+      if (mounted && project != null) {
         setState(() => _projectName = project['name']);
       }
     } catch (e) {
@@ -139,11 +139,11 @@ class _TeamCardWidgetState extends State<TeamCardWidget> {
           margin: const EdgeInsets.only(bottom: AppTheme.spacingS),
           padding: const EdgeInsets.all(AppTheme.spacingM),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(AppTheme.radiusL),
             border: Border.all(
               color: _isActive
-                  ? Colors.black.withValues(alpha: 0.05)
+                  ? AppTheme.borderLight // UX-audit #20
                   : AppTheme.textSecondary.withValues(alpha: 0.2),
             ),
           ),

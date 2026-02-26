@@ -198,7 +198,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: Colors.white,
-                    hintText: 'Email',
+                    labelText: 'Email', // UX-audit #12: explicit label
+                    hintText: 'user@example.com',
                     prefixIcon: const Icon(Icons.email_outlined),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(AppTheme.radiusM),
@@ -220,7 +221,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: Colors.white,
-                    hintText: 'Password',
+                    labelText: 'Password', // UX-audit #12: explicit label
+                    hintText: 'Enter your password',
                     prefixIcon: const Icon(Icons.lock_outlined),
                     suffixIcon: IconButton(
                       icon: Icon(

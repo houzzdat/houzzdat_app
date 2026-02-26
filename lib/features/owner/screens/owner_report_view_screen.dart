@@ -23,7 +23,8 @@ class OwnerReportViewScreen extends StatelessWidget {
       final fmt = DateFormat('d MMM yyyy');
       if (startDate == endDate) return 'Report \u2014 ${fmt.format(start)}';
       return 'Report \u2014 ${fmt.format(start)} to ${fmt.format(end)}';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error parsing report title date: $e');
       return 'Report';
     }
   }
@@ -46,13 +47,13 @@ class OwnerReportViewScreen extends StatelessWidget {
     if (sentAt != null) {
       try {
         sentLabel = DateFormat('d MMM yyyy, h:mm a').format(DateTime.parse(sentAt));
-      } catch (_) {
+      } catch (e) {
+        debugPrint('Error parsing sent date: $e');
         sentLabel = sentAt;
       }
     }
 
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: Text(_title, style: const TextStyle(fontSize: 14)),
         backgroundColor: AppTheme.primaryIndigo,
@@ -125,7 +126,7 @@ class OwnerReportViewScreen extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+          const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
 
           // Report content (read-only markdown)
           Expanded(

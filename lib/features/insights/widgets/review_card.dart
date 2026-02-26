@@ -23,7 +23,7 @@ class ReviewCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: AppTheme.spacingS),
       decoration: BoxDecoration(
-        color: AppTheme.cardWhite,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(AppTheme.radiusL),
         border: Border.all(
           color: _borderColor.withOpacity(0.3),

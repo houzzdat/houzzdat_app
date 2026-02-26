@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/action_card_widget.dart';
 import 'package:houzzdat_app/features/dashboard/tabs/feed_tab.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
+import 'package:houzzdat_app/core/services/error_logging_service.dart';
 
 /// Classic list view of actions for Manager Dashboard with 3 sub-tabs:
 /// OPEN (pending), IN-PROGRESS (in_progress + verifying), COMPLETED.
@@ -17,11 +22,15 @@ class ActionsTab extends StatefulWidget {
 }
 
 class _ActionsTabState extends State<ActionsTab>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin { // UX-audit TL-06: preserve tab state
   final _supabase = Supabase.instance.client;
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
   late TabController _tabController;
+  RealtimeChannel? _channel; // UX-audit CI-12: store channel reference for proper cleanup
+
+  @override
+  bool get wantKeepAlive => true; // UX-audit TL-06
 
   static const _pageSize = 30;
 
@@ -34,6 +43,12 @@ class _ActionsTabState extends State<ActionsTab>
   String _searchQuery = '';
   String? _expandedCardId;
 
+  // UX-audit TL-14: Advanced filters
+  String? _filterProjectId;      // null = all projects
+  DateTimeRange? _filterDateRange;
+  double _filterMinConfidence = 0.0; // 0.0 = no filter
+  List<Map<String, dynamic>> _projects = []; // cached project list for filter dropdown
+
   // Bulk selection (#38)
   bool _isSelectMode = false;
   final Set<String> _selectedActionIds = {};
@@ -44,6 +59,7 @@ class _ActionsTabState extends State<ActionsTab>
     _tabController = TabController(length: 3, vsync: this);
     _scrollController.addListener(_onScroll);
     _loadActions();
+    _loadProjects(); // UX-audit TL-14: load project list for filter dropdown
     _subscribeToChanges();
   }
 
@@ -57,7 +73,7 @@ class _ActionsTabState extends State<ActionsTab>
   }
 
   void _subscribeToChanges() {
-    _supabase
+    _channel = _supabase
         .channel('action_items_classic_changes')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
@@ -68,9 +84,65 @@ class _ActionsTabState extends State<ActionsTab>
             column: 'account_id',
             value: widget.accountId,
           ),
-          callback: (payload) => _loadActions(),
-        )
-        .subscribe();
+          callback: (payload) => _handleRealtimeDelta(payload),
+        );
+    _channel!.subscribe(); // UX-audit CI-12: store reference, subscribe separately
+  }
+
+  /// UX-audit TL-05: Delta sync — apply insert/update/delete patches in-place
+  /// instead of full list reload. Preserves scroll position and avoids UI flicker.
+  void _handleRealtimeDelta(PostgresChangePayload payload) {
+    if (!mounted) return;
+
+    final eventType = payload.eventType;
+    final newRecord = payload.newRecord;
+    final oldRecord = payload.oldRecord;
+
+    setState(() {
+      switch (eventType) {
+        case PostgresChangeEvent.insert:
+          if (newRecord.isNotEmpty) {
+            final item = Map<String, dynamic>.from(newRecord);
+            // Insert at the top (most recent)
+            _actions.insert(0, item);
+          }
+          break;
+
+        case PostgresChangeEvent.update:
+          if (newRecord.isNotEmpty) {
+            final updatedId = newRecord['id']?.toString();
+            if (updatedId != null) {
+              final index = _actions.indexWhere(
+                (a) => a['id']?.toString() == updatedId,
+              );
+              if (index >= 0) {
+                // Patch in-place — preserves list position
+                _actions[index] = Map<String, dynamic>.from(newRecord);
+              } else {
+                // Item not in current page — could be from pagination.
+                // Only add if it matches our account_id filter.
+                final itemAccountId = newRecord['account_id']?.toString();
+                if (itemAccountId == widget.accountId) {
+                  _actions.insert(0, Map<String, dynamic>.from(newRecord));
+                }
+              }
+            }
+          }
+          break;
+
+        case PostgresChangeEvent.delete:
+          final deletedId = oldRecord['id']?.toString();
+          if (deletedId != null) {
+            _actions.removeWhere((a) => a['id']?.toString() == deletedId);
+          }
+          break;
+
+        default:
+          // Fallback for unknown event types — do a full reload
+          _loadActions();
+          return;
+      }
+    });
   }
 
   Future<void> _loadActions() async {
@@ -96,8 +168,8 @@ class _ActionsTabState extends State<ActionsTab>
           _isLoading = false;
         });
       }
-    } catch (e) {
-      debugPrint('Error loading actions: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ActionsTabState._loadActions');
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -126,22 +198,43 @@ class _ActionsTabState extends State<ActionsTab>
           _isLoadingMore = false;
         });
       }
-    } catch (e) {
-      debugPrint('Error loading more actions: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ActionsTabState._loadMoreActions');
       if (mounted) setState(() => _isLoadingMore = false);
+    }
+  }
+
+  /// UX-audit TL-14: Load projects for the filter dropdown
+  Future<void> _loadProjects() async {
+    try {
+      final data = await _supabase
+          .from('projects')
+          .select('id, name')
+          .eq('account_id', widget.accountId)
+          .order('name', ascending: true);
+      if (mounted) {
+        setState(() {
+          _projects = (data as List)
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        });
+      }
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ActionsTabState._loadProjects');
     }
   }
 
   // ─── Filtering & Sorting ────────────────────────────────────────
 
-  /// Apply category filter, search, and sort to a list of actions.
+  /// Apply category filter, search, advanced filters, and sort to a list of actions.
   List<Map<String, dynamic>> _applyFiltersAndSort(List<Map<String, dynamic>> items) {
     var result = items.where((action) {
       // Category filter
       final bool categoryMatch;
       if (_filterCategory == 'needs_review') {
-        categoryMatch = action['needs_review'] == true &&
-            action['review_status'] != 'confirmed';
+        // Derive from review_status alone — needs_review boolean is redundant
+        final rs = action['review_status'] as String?;
+        categoryMatch = rs == 'pending_review' || rs == 'flagged';
       } else {
         categoryMatch = _filterCategory == 'all' ||
             action['category'] == _filterCategory;
@@ -159,7 +252,45 @@ class _ActionsTabState extends State<ActionsTab>
             analysis.contains(query);
       }
 
-      return categoryMatch && searchMatch;
+      // UX-audit TL-14: Project filter
+      bool projectMatch = true;
+      if (_filterProjectId != null) {
+        projectMatch = action['project_id']?.toString() == _filterProjectId;
+      }
+
+      // UX-audit TL-14: Date range filter (on created_at)
+      bool dateMatch = true;
+      if (_filterDateRange != null) {
+        final createdAt = action['created_at']?.toString();
+        if (createdAt != null) {
+          try {
+            final dt = DateTime.parse(createdAt);
+            dateMatch = !dt.isBefore(_filterDateRange!.start) &&
+                !dt.isAfter(_filterDateRange!.end.add(const Duration(days: 1)));
+          } catch (e) {
+            dateMatch = true; // include if date is unparseable
+          }
+        }
+      }
+
+      // UX-audit TL-14: Confidence threshold filter
+      bool confidenceMatch = true;
+      if (_filterMinConfidence > 0.0) {
+        final score = action['confidence_score'];
+        final aiAnalysis = action['ai_analysis'];
+        double? confidence;
+        if (score != null) {
+          confidence = double.tryParse(score.toString());
+        } else if (aiAnalysis is Map && aiAnalysis['confidence_score'] != null) {
+          confidence = double.tryParse(aiAnalysis['confidence_score'].toString());
+        }
+        // If no confidence data, include only when threshold is at minimum
+        confidenceMatch = confidence != null
+            ? confidence >= _filterMinConfidence
+            : false;
+      }
+
+      return categoryMatch && searchMatch && projectMatch && dateMatch && confidenceMatch;
     }).toList();
 
     // Apply sorting
@@ -242,7 +373,11 @@ class _ActionsTabState extends State<ActionsTab>
   }
 
   bool get _hasActiveFilters =>
-      _filterCategory != 'all' || _sortBy != 'newest';
+      _filterCategory != 'all' ||
+      _sortBy != 'newest' ||
+      _filterProjectId != null ||
+      _filterDateRange != null ||
+      _filterMinConfidence > 0.0;
 
   // ─── Bulk Actions (#38) ───────────────────────────────────────
 
@@ -263,73 +398,213 @@ class _ActionsTabState extends State<ActionsTab>
     });
   }
 
+  // UX-audit TL-02: Confirmation dialog for bulk operations
+  // UX-audit TL-16: Undo support with 5-second cache of previous statuses
   Future<void> _bulkResolve() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
     if (_selectedActionIds.isEmpty) return;
+
+    final count = _selectedActionIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Bulk Resolve'),
+        content: Text(
+          'Resolve $count selected action${count == 1 ? '' : 's'} as completed?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.successGreen,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Resolve $count'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    // Cache previous statuses for undo — UX-audit TL-16
+    final previousStatuses = <String, String>{};
+    for (final id in _selectedActionIds) {
+      final item = _actions.firstWhere(
+        (a) => a['id']?.toString() == id,
+        orElse: () => <String, dynamic>{},
+      );
+      previousStatuses[id] = item['status']?.toString() ?? 'pending';
+    }
+    final affectedIds = Set<String>.from(_selectedActionIds);
+
     try {
-      for (final id in _selectedActionIds) {
+      for (final id in affectedIds) {
         await _supabase.from('action_items').update({
           'status': 'completed',
           'updated_at': DateTime.now().toIso8601String(),
         }).eq('id', id);
       }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${_selectedActionIds.length} actions resolved'),
-            backgroundColor: AppTheme.successGreen,
-          ),
-        );
-      }
       setState(() {
         _selectedActionIds.clear();
         _isSelectMode = false;
       });
       _loadActions();
-    } catch (e) {
-      debugPrint('Error bulk resolving: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$count actions resolved'),
+            backgroundColor: AppTheme.successGreen,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'UNDO',
+              textColor: Colors.white,
+              onPressed: () => _undoBulkOperation(previousStatuses),
+            ),
+          ),
+        );
+      }
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ActionsTabState._bulkResolve');
     }
   }
 
+  // UX-audit TL-02: Confirmation dialog for bulk status update
+  // UX-audit TL-16: Undo support
   Future<void> _bulkUpdateStatus(String status) async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
     if (_selectedActionIds.isEmpty) return;
+
+    final count = _selectedActionIds.length;
+    final statusLabel = status.replaceAll('_', ' ');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Bulk Update'),
+        content: Text(
+          'Update $count selected action${count == 1 ? '' : 's'} to "$statusLabel"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Update $count'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    // Cache previous statuses for undo — UX-audit TL-16
+    final previousStatuses = <String, String>{};
+    for (final id in _selectedActionIds) {
+      final item = _actions.firstWhere(
+        (a) => a['id']?.toString() == id,
+        orElse: () => <String, dynamic>{},
+      );
+      previousStatuses[id] = item['status']?.toString() ?? 'pending';
+    }
+    final affectedIds = Set<String>.from(_selectedActionIds);
+
     try {
-      for (final id in _selectedActionIds) {
+      for (final id in affectedIds) {
         await _supabase.from('action_items').update({
           'status': status,
           'updated_at': DateTime.now().toIso8601String(),
         }).eq('id', id);
       }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${_selectedActionIds.length} actions updated to $status'),
-            backgroundColor: AppTheme.successGreen,
-          ),
-        );
-      }
       setState(() {
         _selectedActionIds.clear();
         _isSelectMode = false;
       });
       _loadActions();
-    } catch (e) {
-      debugPrint('Error bulk updating: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$count actions updated to $statusLabel'),
+            backgroundColor: AppTheme.successGreen,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'UNDO',
+              textColor: Colors.white,
+              onPressed: () => _undoBulkOperation(previousStatuses),
+            ),
+          ),
+        );
+      }
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ActionsTabState._bulkUpdateStatus');
+    }
+  }
+
+  /// UX-audit TL-16: Undo bulk operation by restoring previous statuses
+  Future<void> _undoBulkOperation(Map<String, String> previousStatuses) async {
+    try {
+      for (final entry in previousStatuses.entries) {
+        await _supabase.from('action_items').update({
+          'status': entry.value,
+          'updated_at': DateTime.now().toIso8601String(),
+        }).eq('id', entry.key);
+      }
+      _loadActions();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${previousStatuses.length} actions restored'),
+            backgroundColor: AppTheme.infoBlue,
+          ),
+        );
+      }
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: '_ActionsTabState._undoBulkOperation');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to undo. Please restore manually.'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
+      }
     }
   }
 
   void _showFilterBottomSheet() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true, // UX-audit TL-14: allow taller sheet for advanced filters
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) => _FilterBottomSheet(
         filterCategory: _filterCategory,
         sortBy: _sortBy,
-        onApply: (category, sort) {
+        projects: _projects,
+        filterProjectId: _filterProjectId,
+        filterDateRange: _filterDateRange,
+        filterMinConfidence: _filterMinConfidence,
+        onApply: ({
+          required String category,
+          required String sort,
+          String? projectId,
+          DateTimeRange? dateRange,
+          required double minConfidence,
+        }) {
           setState(() {
             _filterCategory = category;
             _sortBy = sort;
+            _filterProjectId = projectId;
+            _filterDateRange = dateRange;
+            _filterMinConfidence = minConfidence;
           });
           Navigator.pop(ctx);
         },
@@ -366,6 +641,7 @@ class _ActionsTabState extends State<ActionsTab>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // UX-audit TL-06: required for AutomaticKeepAliveClientMixin
     final openActions = _openActions;
     final inProgressActions = _inProgressActions;
     final completedActions = _completedActions;
@@ -378,7 +654,7 @@ class _ActionsTabState extends State<ActionsTab>
           padding: const EdgeInsets.fromLTRB(
             AppTheme.spacingM, AppTheme.spacingM, AppTheme.spacingM, AppTheme.spacingS,
           ),
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: Row(
             children: [
               Expanded(child: TextField(
@@ -390,6 +666,7 @@ class _ActionsTabState extends State<ActionsTab>
                   suffixIcon: _searchQuery.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.clear, size: 20),
+                          tooltip: 'Clear search', // UX-audit #21
                           onPressed: () {
                             _searchController.clear();
                             setState(() => _searchQuery = '');
@@ -446,8 +723,8 @@ class _ActionsTabState extends State<ActionsTab>
                 tooltip: 'Voice Notes Feed',
                 onPressed: () {
                   Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => Scaffold(
+                    FadeSlideRoute(
+                      page: Scaffold(
                         appBar: AppBar(
                           title: const Text('VOICE NOTES FEED',
                             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -533,7 +810,7 @@ class _ActionsTabState extends State<ActionsTab>
 
         // Tab Bar: OPEN / IN-PROGRESS / COMPLETED
         Container(
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: TabBar(
             controller: _tabController,
             indicatorColor: AppTheme.primaryIndigo,
@@ -615,7 +892,7 @@ class _ActionsTabState extends State<ActionsTab>
             child: Text(
               '$count',
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 12, // UX-audit TL-15: 11 → 12 for readability on high counts
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
@@ -683,6 +960,7 @@ class _ActionsTabState extends State<ActionsTab>
       onRefresh: _loadActions,
       child: ListView.builder(
         controller: _scrollController,
+        cacheExtent: 500, // UX-audit #6: improved scroll perf
         padding: const EdgeInsets.only(
           top: AppTheme.spacingS,
           bottom: AppTheme.spacingXL,
@@ -718,14 +996,17 @@ class _ActionsTabState extends State<ActionsTab>
             // Needs-attention items
             if (index <= tabNeedsAttention.length) {
               final item = tabNeedsAttention[index - 1];
-              return _wrapWithSelectMode(
-                item,
-                ActionCardWidget(
-                  item: item,
-                  onRefresh: _loadActions,
-                  expandedCardId: _expandedCardId,
-                  onExpandChanged: (id) =>
-                      setState(() => _expandedCardId = id),
+              return StaggeredListItem(
+                index: index - 1,
+                child: _wrapWithSelectMode(
+                  item,
+                  ActionCardWidget(
+                    item: item,
+                    onRefresh: _loadActions,
+                    expandedCardId: _expandedCardId,
+                    onExpandChanged: (id) =>
+                        setState(() => _expandedCardId = id),
+                  ),
                 ),
               );
             }
@@ -760,14 +1041,18 @@ class _ActionsTabState extends State<ActionsTab>
             );
           }
 
-          return _wrapWithSelectMode(
-            mainItems[mainIndex],
-            ActionCardWidget(
-              item: mainItems[mainIndex],
-              onRefresh: _loadActions,
-              expandedCardId: _expandedCardId,
-              onExpandChanged: (id) =>
-                  setState(() => _expandedCardId = id),
+          // UX-audit #24: Staggered slide-in animation for main action list items.
+          return StaggeredListItem(
+            index: mainIndex,
+            child: _wrapWithSelectMode(
+              mainItems[mainIndex],
+              ActionCardWidget(
+                item: mainItems[mainIndex],
+                onRefresh: _loadActions,
+                expandedCardId: _expandedCardId,
+                onExpandChanged: (id) =>
+                    setState(() => _expandedCardId = id),
+              ),
             ),
           );
         },
@@ -780,21 +1065,36 @@ class _ActionsTabState extends State<ActionsTab>
     _tabController.dispose();
     _searchController.dispose();
     _scrollController.dispose();
-    _supabase.removeChannel(_supabase.channel('action_items_classic_changes'));
+    _channel?.unsubscribe(); // UX-audit CI-12: proper cleanup via stored reference
     super.dispose();
   }
 }
 
-// ─── Filter Bottom Sheet (Category + Sort only) ─────────────────────
+// ─── Filter Bottom Sheet (Category + Sort + Advanced Filters) ─────────
+// UX-audit TL-14: Extended with project dropdown, date range picker, confidence slider
 
 class _FilterBottomSheet extends StatefulWidget {
   final String filterCategory;
   final String sortBy;
-  final void Function(String category, String sort) onApply;
+  final List<Map<String, dynamic>> projects;
+  final String? filterProjectId;
+  final DateTimeRange? filterDateRange;
+  final double filterMinConfidence;
+  final void Function({
+    required String category,
+    required String sort,
+    String? projectId,
+    DateTimeRange? dateRange,
+    required double minConfidence,
+  }) onApply;
 
   const _FilterBottomSheet({
     required this.filterCategory,
     required this.sortBy,
+    required this.projects,
+    this.filterProjectId,
+    this.filterDateRange,
+    required this.filterMinConfidence,
     required this.onApply,
   });
 
@@ -805,18 +1105,62 @@ class _FilterBottomSheet extends StatefulWidget {
 class _FilterBottomSheetState extends State<_FilterBottomSheet> {
   late String _category;
   late String _sort;
+  String? _projectId;
+  DateTimeRange? _dateRange;
+  late double _minConfidence;
+  bool _showAdvanced = false;
 
   @override
   void initState() {
     super.initState();
     _category = widget.filterCategory;
     _sort = widget.sortBy;
+    _projectId = widget.filterProjectId;
+    _dateRange = widget.filterDateRange;
+    _minConfidence = widget.filterMinConfidence;
+    // Auto-expand if any advanced filter is active
+    _showAdvanced = _projectId != null || _dateRange != null || _minConfidence > 0.0;
+  }
+
+  bool get _hasAdvancedFilters =>
+      _projectId != null || _dateRange != null || _minConfidence > 0.0;
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 2),
+      lastDate: now,
+      initialDateRange: _dateRange ??
+          DateTimeRange(
+            start: now.subtract(const Duration(days: 30)),
+            end: now,
+          ),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppTheme.primaryIndigo,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppTheme.textPrimary,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _dateRange = picked);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      padding: EdgeInsets.fromLTRB(20, 16, 20, 24 + bottomPadding),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -866,6 +1210,175 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
             ],
           ),
 
+          const SizedBox(height: 16),
+
+          // Advanced Filters toggle
+          InkWell(
+            onTap: () => setState(() => _showAdvanced = !_showAdvanced),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    _showAdvanced ? Icons.expand_less : Icons.expand_more,
+                    size: 20,
+                    color: AppTheme.primaryIndigo,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Advanced Filters',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _hasAdvancedFilters ? AppTheme.primaryIndigo : AppTheme.textSecondary,
+                    ),
+                  ),
+                  if (_hasAdvancedFilters) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 8, height: 8,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppTheme.errorRed,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+
+          // Advanced filter fields (collapsible)
+          if (_showAdvanced) ...[
+            const SizedBox(height: 12),
+
+            // Project dropdown
+            const Text('Project / Site', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textSecondary)),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.backgroundGrey,
+                borderRadius: BorderRadius.circular(AppTheme.radiusM),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: _projectId,
+                  isExpanded: true,
+                  hint: const Text('All Projects', style: TextStyle(fontSize: 13)),
+                  style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('All Projects'),
+                    ),
+                    ...widget.projects.map((p) => DropdownMenuItem<String?>(
+                      value: p['id']?.toString(),
+                      child: Text(
+                        p['name']?.toString() ?? 'Unknown',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    )),
+                  ],
+                  onChanged: (value) => setState(() => _projectId = value),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Date range picker
+            const Text('Date Range', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textSecondary)),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: _pickDateRange,
+              borderRadius: BorderRadius.circular(AppTheme.radiusM),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppTheme.backgroundGrey,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusM),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.date_range, size: 18, color: _dateRange != null ? AppTheme.primaryIndigo : AppTheme.textSecondary),
+                    const SizedBox(width: 8),
+                    Text(
+                      _dateRange != null
+                          ? '${DateFormat('d MMM yyyy').format(_dateRange!.start)} — ${DateFormat('d MMM yyyy').format(_dateRange!.end)}'
+                          : 'All time',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: _dateRange != null ? AppTheme.textPrimary : AppTheme.textSecondary,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_dateRange != null)
+                      GestureDetector(
+                        onTap: () => setState(() => _dateRange = null),
+                        child: const Icon(Icons.close, size: 18, color: AppTheme.textSecondary),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Confidence slider
+            Row(
+              children: [
+                const Text('Min Confidence', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textSecondary)),
+                const Spacer(),
+                Text(
+                  _minConfidence > 0
+                      ? '${(_minConfidence * 100).toInt()}%'
+                      : 'Off',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: _minConfidence > 0 ? AppTheme.primaryIndigo : AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                activeTrackColor: AppTheme.primaryIndigo,
+                inactiveTrackColor: AppTheme.primaryIndigo.withValues(alpha: 0.15),
+                thumbColor: AppTheme.primaryIndigo,
+                overlayColor: AppTheme.primaryIndigo.withValues(alpha: 0.1),
+                trackHeight: 4,
+              ),
+              child: Slider(
+                value: _minConfidence,
+                min: 0.0,
+                max: 1.0,
+                divisions: 10,
+                label: _minConfidence > 0
+                    ? '${(_minConfidence * 100).toInt()}%'
+                    : 'Off',
+                onChanged: (value) => setState(() => _minConfidence = value),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Off', style: TextStyle(fontSize: 10, color: AppTheme.textSecondary.withValues(alpha: 0.6))),
+                  Text('50%', style: TextStyle(fontSize: 10, color: AppTheme.textSecondary.withValues(alpha: 0.6))),
+                  Text('100%', style: TextStyle(fontSize: 10, color: AppTheme.textSecondary.withValues(alpha: 0.6))),
+                ],
+              ),
+            ),
+          ],
+
           const SizedBox(height: 20),
 
           // Action buttons
@@ -876,13 +1389,22 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
                   setState(() {
                     _category = 'all';
                     _sort = 'newest';
+                    _projectId = null;
+                    _dateRange = null;
+                    _minConfidence = 0.0;
                   });
                 },
                 child: const Text('Reset All'),
               ),
               const Spacer(),
               ElevatedButton(
-                onPressed: () => widget.onApply(_category, _sort),
+                onPressed: () => widget.onApply(
+                  category: _category,
+                  sort: _sort,
+                  projectId: _projectId,
+                  dateRange: _dateRange,
+                  minConfidence: _minConfidence,
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryIndigo,
                   foregroundColor: Colors.white,

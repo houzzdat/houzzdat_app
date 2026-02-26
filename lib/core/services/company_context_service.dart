@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:houzzdat_app/core/services/error_logging_service.dart';
 
 /// Model representing a user's association with a company.
 class CompanyAssociation {
@@ -113,8 +114,8 @@ class CompanyContextService extends ChangeNotifier {
       await _resolveActiveCompany();
 
       _isInitialized = true;
-    } catch (e) {
-      debugPrint('Error initializing CompanyContextService: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'CompanyContextService.initialize');
       // Fallback: try to get from users table directly
       await _fallbackInitialize(userId);
     } finally {
@@ -149,8 +150,8 @@ class CompanyContextService extends ChangeNotifier {
 
         _isInitialized = true;
       }
-    } catch (e) {
-      debugPrint('Error in fallback initialization: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'CompanyContextService._fallbackInitialize');
     }
   }
 
@@ -213,8 +214,8 @@ class CompanyContextService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_keyActiveAccount, accountId);
-    } catch (e) {
-      debugPrint('Error saving company preference: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'CompanyContextService.switchCompany.savePreference');
     }
 
     // Update users table for backward compatibility
@@ -225,8 +226,8 @@ class CompanyContextService extends ChangeNotifier {
           'account_id': accountId,
           'role': company.role,
         }).eq('id', _userId!);
-      } catch (e) {
-        debugPrint('Error updating users table context: $e');
+      } catch (e, st) {
+        ErrorLogging.capture(e, stackTrace: st, context: 'CompanyContextService.switchCompany.updateUsersTable');
       }
     }
 
@@ -260,8 +261,8 @@ class CompanyContextService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_keyActiveAccount);
-    } catch (e) {
-      debugPrint('Error clearing company preference: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'CompanyContextService.reset');
     }
 
     notifyListeners();

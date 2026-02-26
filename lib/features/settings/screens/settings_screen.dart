@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:go_router/go_router.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/services/company_context_service.dart';
 import 'package:houzzdat_app/main.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/logout_dialog.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/confidence_calibration_widget.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 
 /// Unified Settings screen used across all roles.
 ///
@@ -51,16 +53,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .from('users')
           .select('full_name, email, role')
           .eq('id', user.id)
-          .single();
+          .maybeSingle(); // UX-audit CI-01
 
       final companyService = CompanyContextService();
       final companyName = companyService.activeCompanyName ?? '';
 
       if (mounted) {
         setState(() {
-          _fullName = data['full_name']?.toString() ?? '';
-          _email = data['email']?.toString() ?? user.email ?? '';
-          _userRole = data['role']?.toString() ?? widget.role;
+          _fullName = data?['full_name']?.toString() ?? '';
+          _email = data?['email']?.toString() ?? user.email ?? '';
+          _userRole = data?['role']?.toString() ?? widget.role;
           _companyName = companyName;
           _isLoading = false;
         });
@@ -86,6 +88,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirm == true && mounted) {
       await CompanyContextService().reset();
       await _supabase.auth.signOut();
+      if (mounted) {
+        // Pop all imperative navigator routes first, then let GoRouter go to root
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
+        GoRouter.of(context).go('/');
+      }
     }
   }
 
@@ -120,7 +128,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ShimmerLoadingList() // UX-audit #4: shimmer instead of spinner
           : ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [

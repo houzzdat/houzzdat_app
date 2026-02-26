@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:houzzdat_app/core/services/error_logging_service.dart';
 
 /// Represents a single review item from any domain (materials, payments, milestones).
 class ReviewItem {
@@ -75,8 +75,8 @@ class ReviewQueueService {
         total += (result as List).length;
       }
       return total;
-    } catch (e) {
-      debugPrint('Error getting unreviewed count: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'ReviewQueueService.getUnreviewedCount');
       return 0;
     }
   }
@@ -109,7 +109,8 @@ class ReviewQueueService {
     try {
       var query = _supabase
           .from('material_specs')
-          .select('*, voice_notes(audio_url, transcript_raw)')
+          // Use source_voice_note_id (the canonical FK for AI-created records)
+          .select('*, voice_notes:source_voice_note_id(audio_url, transcript_raw)')
           .eq('account_id', accountId)
           .eq('auto_created', true)
           .or('needs_confirmation.eq.true,possible_duplicate_of.not.is.null');
@@ -138,8 +139,8 @@ class ReviewQueueService {
           projectId: row['project_id'],
         );
       }).toList();
-    } catch (e) {
-      debugPrint('Error fetching material review items: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'ReviewQueueService._getMaterialReviewItems');
       return [];
     }
   }
@@ -181,8 +182,8 @@ class ReviewQueueService {
           projectId: row['project_id'],
         );
       }).toList();
-    } catch (e) {
-      debugPrint('Error fetching payment review items: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'ReviewQueueService._getPaymentReviewItems');
       return [];
     }
   }
@@ -222,18 +223,32 @@ class ReviewQueueService {
           projectId: row['project_id'],
         );
       }).toList();
-    } catch (e) {
-      debugPrint('Error fetching invoice review items: $e');
+    } catch (e, st) {
+      ErrorLogging.capture(e, stackTrace: st, context: 'ReviewQueueService._getInvoiceReviewItems');
       return [];
     }
   }
 
   /// Confirm a record — mark as reviewed and accepted.
-  Future<void> confirmRecord(String table, String id) async {
-    await _supabase.from(table).update({
+  ///
+  /// [isDuplicate] should be true when the record was flagged as a possible
+  /// duplicate (i.e. [ReviewItem.isPossibleDuplicate] == true), so that we
+  /// also clear the `possible_duplicate_of` field.  For records that only had
+  /// `needs_confirmation == true` (no duplicate flag) we leave
+  /// `possible_duplicate_of` untouched to avoid an unnecessary write.
+  Future<void> confirmRecord(
+    String table,
+    String id, {
+    bool isDuplicate = false,
+  }) async {
+    final payload = <String, dynamic>{
       'needs_confirmation': false,
-      'possible_duplicate_of': null,
-    }).eq('id', id);
+    };
+    // Only clear the duplicate pointer when the item was actually flagged as one.
+    if (isDuplicate) {
+      payload['possible_duplicate_of'] = null;
+    }
+    await _supabase.from(table).update(payload).eq('id', id);
   }
 
   /// Dismiss a record — delete it and log an AI correction.

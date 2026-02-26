@@ -235,6 +235,7 @@ class _RecipientSelectorDialogState extends State<RecipientSelectorDialog> {
                   suffixIcon: _searchQuery.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.clear, size: 18),
+                          tooltip: 'Clear search', // UX-audit #21
                           onPressed: () {
                             _searchController.clear();
                             setState(() => _searchQuery = '');

@@ -4,6 +4,7 @@ import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 import 'package:houzzdat_app/features/dashboard/widgets/project_dialogs.dart';
 import 'package:houzzdat_app/features/dashboard/screens/manager_site_detail_screen.dart';
+import 'package:houzzdat_app/core/widgets/page_transitions.dart';
 import 'package:intl/intl.dart';
 
 /// Projects/Sites tab with two sub-tabs:
@@ -43,7 +44,7 @@ class _ProjectsTabState extends State<ProjectsTab>
       children: [
         // Sub-tab bar
         Container(
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: TabBar(
             controller: _tabController,
             labelColor: AppTheme.primaryIndigo,
@@ -64,7 +65,7 @@ class _ProjectsTabState extends State<ProjectsTab>
             ],
           ),
         ),
-        const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
         Expanded(
           child: TabBarView(
             controller: _tabController,
@@ -355,12 +356,10 @@ class _SitesSubTabState extends State<_SitesSubTab>
                     onTap: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
-                          builder: (context) => ManagerSiteDetailScreen(
-                            project: project,
-                            accountId: widget.accountId,
-                          ),
-                        ),
+                        FadeSlideRoute(page: ManagerSiteDetailScreen(
+                          project: project,
+                          accountId: widget.accountId,
+                        )),
                       );
                     },
                     onEdit: () => _handleEditProject(project),
@@ -457,10 +456,10 @@ class _SiteGridCardState extends State<_SiteGridCard> {
       onTap: widget.onTap,
       child: Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(AppTheme.radiusL),
         border: Border.all(
-          color: Colors.black.withValues(alpha: 0.05),
+          color: AppTheme.borderLight, // UX-audit #20
         ),
         boxShadow: [
           BoxShadow(
@@ -835,7 +834,7 @@ class _AttendanceSubTabState extends State<_AttendanceSubTab>
         Container(
           padding: const EdgeInsets.symmetric(
               horizontal: AppTheme.spacingM, vertical: AppTheme.spacingS),
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: Row(
             children: [
               // Date picker chip
@@ -959,7 +958,7 @@ class _AttendanceSubTabState extends State<_AttendanceSubTab>
                         children: [
                           Icon(Icons.event_busy,
                               size: 48,
-                              color: Colors.grey.shade300),
+                              color: Theme.of(context).dividerColor),
                           const SizedBox(height: 12),
                           Text(
                             'No attendance records',

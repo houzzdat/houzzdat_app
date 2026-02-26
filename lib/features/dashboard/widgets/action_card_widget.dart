@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
@@ -94,7 +95,8 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
       if (diff.inHours < 24) return '${diff.inHours}h ago';
       if (diff.inDays < 7) return '${diff.inDays}d ago';
       return '${created.day}/${created.month}';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error parsing action time: $e');
       return '';
     }
   }
@@ -219,13 +221,13 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
           .from('users')
           .select('full_name, email')
           .eq('id', userId)
-          .single();
-      if (mounted) {
+          .maybeSingle(); // UX-audit CI-01
+      if (mounted && data != null) {
         setState(() => _senderName = data['full_name']?.toString()
             ?? data['email']?.toString()
             ?? 'Unknown');
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('Error loading sender: $e'); } // UX-audit CI-03
   }
 
   Future<void> _loadProjectName() async {
@@ -236,9 +238,9 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
           .from('projects')
           .select('name')
           .eq('id', projectId)
-          .single();
-      if (mounted) setState(() => _projectName = data['name']?.toString() ?? 'Unknown');
-    } catch (_) {}
+          .maybeSingle(); // UX-audit CI-01
+      if (mounted && data != null) setState(() => _projectName = data['name']?.toString() ?? 'Unknown');
+    } catch (e) { debugPrint('Error loading project: $e'); } // UX-audit CI-03
   }
 
   Future<void> _loadApprovalDetails() async {
@@ -260,7 +262,9 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
           _materialRequests = List<Map<String, dynamic>>.from(materials);
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Error loading approval/material details: $e');
+    }
   }
 
   // ─── Voice Note Progressive Transcript ──────────────────────
@@ -493,6 +497,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
   // ─── Action Handlers ──────────────────────────────────────────
 
   Future<void> _handleApprove() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
     await _recordInteraction('approved', 'Manager approved this action');
     final success = await _updateStatus('in_progress');
     if (success) {
@@ -566,6 +571,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
 
   /// DENY action — mandatory reason (Step 4E)
   Future<void> _handleDeny() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
     final controller = TextEditingController();
     final reason = await showDialog<String>(
       context: context,
@@ -596,11 +602,11 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
           ),
           ElevatedButton(
             onPressed: () {
-              if (controller.text.trim().isNotEmpty) {
+              if (controller.text.trim().length >= 10) { // UX-audit TL-07: minimum 10 chars for meaningful audit trail
                 Navigator.pop(ctx, controller.text.trim());
               } else {
                 ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(content: Text('A reason is required to deny')),
+                  const SnackBar(content: Text('Please provide at least 10 characters for the denial reason')),
                 );
               }
             },
@@ -745,7 +751,34 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
   }
 
+  // UX-audit TL-01: Added confirmation dialog — prevents accidental status changes
   Future<void> _handleResolve() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: haptic feedback
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Resolve'),
+        content: const Text(
+          'Mark this action as resolved and completed? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.successGreen,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Resolve'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     await _recordInteraction('resolved', 'Manager marked as resolved');
     await _updateStatus('completed');
     widget.onRefresh();
@@ -1125,7 +1158,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
   Future<void> _handleConfirmReview() async {
     final userId = _supabase.auth.currentUser?.id;
     await _supabase.from('action_items').update({
-      'needs_review': false,
+      // review_status is the sole authority; needs_review boolean is derived
       'review_status': 'confirmed',
       'reviewed_by': userId,
       'reviewed_at': DateTime.now().toIso8601String(),
@@ -1142,7 +1175,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
   Future<void> _handleDismissReview() async {
     final userId = _supabase.auth.currentUser?.id;
     await _supabase.from('action_items').update({
-      'needs_review': false,
+      // review_status is the sole authority; needs_review boolean is derived
       'review_status': 'dismissed',
       'reviewed_by': userId,
       'reviewed_at': DateTime.now().toIso8601String(),
@@ -1397,7 +1430,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
         ),
         child: Text(
           label,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700), // UX-audit TL-09: 11 → 12
         ),
       ),
     );
@@ -1428,6 +1461,10 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     }
 
     // Pending items — category-specific actions
+    // UX-audit TL-10: surface "Escalate" on high-priority pending items
+    final priority = (widget.item['priority'] ?? '').toString().toLowerCase();
+    final isHighPriority = priority == 'high' || priority == 'critical';
+
     if (status == 'pending') {
       switch (category) {
         case 'approval':
@@ -1437,13 +1474,21 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
             _actionBtn('WITH NOTE', AppTheme.infoBlue, _handleApproveWithNote),
             const SizedBox(width: 6),
             _actionBtn('DENY', AppTheme.errorRed, _handleDeny),
+            if (isHighPriority) ...[
+              const SizedBox(width: 6),
+              _actionBtn('ESCALATE', AppTheme.warningOrange, _handleEscalateToOwner),
+            ],
           ];
 
         case 'action_required':
           return [
             _actionBtn('INSTRUCT', AppTheme.infoBlue, _handleInstruct),
             const SizedBox(width: 6),
-            _actionBtn('FORWARD', AppTheme.warningOrange, _handleForward),
+            if (isHighPriority) ...[
+              _actionBtn('ESCALATE', AppTheme.warningOrange, _handleEscalateToOwner),
+            ] else ...[
+              _actionBtn('FORWARD', AppTheme.warningOrange, _handleForward),
+            ],
             const SizedBox(width: 6),
             _actionBtn('APPROVE', AppTheme.successGreen, _handleManagerApprove),
           ];
@@ -1483,8 +1528,9 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     final status = widget.item['status'] ?? 'pending';
     final aiSummary = widget.item['summary'] ?? 'Action Item';
     final isCritical = widget.item['is_critical_flag'] == true;
-    final needsReview = widget.item['needs_review'] == true &&
-        widget.item['review_status'] != 'confirmed';
+    // Derive from review_status alone — needs_review boolean is redundant
+    final _rs = widget.item['review_status'] as String?;
+    final needsReview = _rs == 'pending_review' || _rs == 'flagged';
 
     // For approval cards, append extracted amount to summary
     String summaryText = aiSummary;
@@ -1503,10 +1549,10 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
           // Line 1: Priority dot + label, Category pill, badges, time
           Row(
             children: [
-              // Priority: colored dot + text
+              // Priority: colored dot + text — UX-audit HH-11: 10 → 12 for field scrolling
               Container(
-                width: 10,
-                height: 10,
+                width: 12,
+                height: 12,
                 decoration: BoxDecoration(
                   color: _getPriorityColor(),
                   shape: BoxShape.circle,
@@ -1543,8 +1589,17 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
                 const SizedBox(width: 8),
                 const CategoryBadge(
                   text: 'AI-SUGGESTED',
-                  color: Color(0xFF9E9E9E),
+                  color: AppTheme.badgeGrey, // UX-audit #20
                   icon: Icons.auto_awesome,
+                ),
+              ],
+              // UX-audit TL-04: Show low-confidence warning on collapsed card
+              if (_getConfidenceScore() != null && _getConfidenceScore()! < 0.70) ...[
+                const SizedBox(width: 8),
+                CategoryBadge(
+                  text: '${(_getConfidenceScore()! * 100).toStringAsFixed(0)}%',
+                  color: AppTheme.textSecondary,
+                  icon: Icons.warning_amber_rounded,
                 ),
               ],
               const Spacer(),
@@ -1603,8 +1658,9 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
   /// Action button row — Line 4 of collapsed card
   Widget _buildActionRow() {
     final isDependencyLocked = widget.item['is_dependency_locked'] == true;
-    final needsReview = widget.item['needs_review'] == true &&
-        widget.item['review_status'] != 'confirmed';
+    // Derive from review_status alone — needs_review boolean is redundant
+    final _rs = widget.item['review_status'] as String?;
+    final needsReview = _rs == 'pending_review' || _rs == 'flagged';
 
     if (isDependencyLocked) {
       return Container(
@@ -1780,6 +1836,22 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
                     height: 200,
                     width: double.infinity,
                     fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container( // UX-audit #8: error fallback
+                      height: 200,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: AppTheme.backgroundGrey,
+                        borderRadius: BorderRadius.circular(AppTheme.radiusM),
+                      ),
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.broken_image_outlined, size: 40, color: AppTheme.textSecondary),
+                          SizedBox(height: 8),
+                          Text('Image unavailable', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -1949,9 +2021,15 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
                   if (_interactionHistory.length > 3)
                     GestureDetector(
                       onTap: _showStakeholderTrail,
-                      child: Text(
-                        'View all (${_interactionHistory.length})',
-                        style: AppTheme.caption.copyWith(color: AppTheme.infoBlue),
+                      child: Row( // UX-audit HH-14: add chevron affordance + use bodySmall
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'View all (${_interactionHistory.length})',
+                            style: AppTheme.bodySmall.copyWith(color: AppTheme.infoBlue),
+                          ),
+                          const Icon(Icons.chevron_right, size: 16, color: AppTheme.infoBlue),
+                        ],
                       ),
                     ),
                 ],
@@ -1965,21 +2043,21 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
                     children: [
                       Icon(
                         _getInteractionIcon(interaction['action']),
-                        size: 14,
+                        size: 18, // UX-audit HH-13: 14 → 18 for field readability
                         color: AppTheme.textSecondary,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           '${interaction['action'].toString().toUpperCase()} \u2014 ${interaction['details']}',
-                          style: AppTheme.caption,
+                          style: AppTheme.bodySmall, // UX-audit HH-13: caption (11sp) → bodySmall (12sp)
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       Text(
                         _formatTimestamp(timestamp),
-                        style: AppTheme.caption.copyWith(fontSize: 10),
+                        style: AppTheme.caption, // UX-audit HH-13: caption.copyWith(fontSize: 10) → caption (13sp)
                       ),
                     ],
                   ),
@@ -1996,8 +2074,9 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final needsReview = widget.item['needs_review'] == true &&
-        widget.item['review_status'] != 'confirmed';
+    // Derive from review_status alone — needs_review boolean is redundant
+    final _rs = widget.item['review_status'] as String?;
+    final needsReview = _rs == 'pending_review' || _rs == 'flagged';
     final isCritical = widget.item['is_critical_flag'] == true;
 
     // Left border color: critical > needs-review > priority
@@ -2005,7 +2084,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     if (isCritical) {
       leftBorderColor = AppTheme.errorRed;
     } else if (needsReview) {
-      leftBorderColor = const Color(0xFFBDBDBD);
+      leftBorderColor = AppTheme.needsReviewBorder; // UX-audit #20
     } else {
       leftBorderColor = widget.stageColor ?? _getPriorityColor();
     }
@@ -2013,7 +2092,7 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
     // Needs-review cards get amber tint background
     Color? cardBackground;
     if (needsReview) {
-      cardBackground = const Color(0xFFFFF8E1);
+      cardBackground = AppTheme.needsReviewBackground;
     }
 
     return Card(
@@ -2028,8 +2107,8 @@ class _ActionCardWidgetState extends State<ActionCardWidget> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 4px left priority/status border bar
-            Container(width: 4, color: leftBorderColor),
+            // 6px left priority/status border bar — UX-audit HH-08: 4 → 6 for at-a-glance triage
+            Container(width: 6, color: leftBorderColor),
             // Card content
             Expanded(
               child: InkWell(

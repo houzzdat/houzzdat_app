@@ -144,7 +144,8 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
       if (diff.inHours < 24) return '${diff.inHours}h ago';
       if (diff.inDays < 7) return '${diff.inDays}d ago';
       return '${created.day}/${created.month}';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error parsing voice note time: $e');
       return '';
     }
   }

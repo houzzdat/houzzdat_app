@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:houzzdat_app/core/theme/app_theme.dart';
 import 'package:houzzdat_app/features/voice_notes/widgets/voice_note_audio_player.dart';
 import 'package:houzzdat_app/core/services/audio_recorder_service.dart';
+import 'package:houzzdat_app/core/widgets/shared_widgets.dart';
 
 /// Daily Tasks tab — two-tier expandable action cards for worker tasks.
 ///
@@ -25,7 +27,9 @@ class DailyTasksTab extends StatefulWidget {
   State<DailyTasksTab> createState() => _DailyTasksTabState();
 }
 
-class _DailyTasksTabState extends State<DailyTasksTab> {
+class _DailyTasksTabState extends State<DailyTasksTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true; // UX-audit #3: preserve tab state
   final _supabase = Supabase.instance.client;
   List<Map<String, dynamic>> _tasks = [];
   bool _isLoading = true;
@@ -746,10 +750,9 @@ class _DailyTasksTabState extends State<DailyTasksTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // UX-audit #3: required by AutomaticKeepAliveClientMixin
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppTheme.primaryIndigo),
-      );
+      return const ShimmerLoadingList(); // UX-audit #4: shimmer instead of spinner
     }
 
     if (_tasks.isEmpty) {
@@ -876,6 +879,7 @@ class _AddInfoSheetState extends State<_AddInfoSheet> {
   }
 
   Future<void> _startRecording() async {
+    HapticFeedback.mediumImpact(); // UX-audit #16: tactile feedback on record start
     final hasPermission = await _recorder.checkPermission();
     if (!hasPermission) {
       setState(() => _error = 'Microphone permission denied');

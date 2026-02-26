@@ -71,38 +71,36 @@ class FundRequestCard extends StatelessWidget {
     if (createdAt != null) {
       try {
         createdLabel = _dateFormat.format(DateTime.parse(createdAt));
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Error parsing fund request date: $e');
+      }
     }
 
     String respondedLabel = '';
     if (respondedAt != null) {
       try {
         respondedLabel = _dateFormat.format(DateTime.parse(respondedAt));
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Error parsing response date: $e');
+      }
     }
 
     final statusColor = _statusColor(status);
 
+    // UX-audit #19: standardized Card elevation instead of custom BoxShadow
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: Card(
         margin: const EdgeInsets.symmetric(
           horizontal: AppTheme.spacingM,
           vertical: AppTheme.spacingXS,
         ),
-        decoration: BoxDecoration(
-          color: Colors.white,
+        elevation: AppTheme.elevationLow,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusL),
-          border: Border.all(
-            color: isExpanded ? statusColor.withValues(alpha: 0.4) : const Color(0xFFE0E0E0),
+          side: BorderSide(
+            color: isExpanded ? statusColor.withValues(alpha: 0.4) : AppTheme.dividerColor,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -278,7 +276,7 @@ class FundRequestCard extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: AppTheme.backgroundGrey,
                           borderRadius: BorderRadius.circular(AppTheme.radiusS),
-                          border: Border.all(color: const Color(0xFFE0E0E0)),
+                          border: Border.all(color: AppTheme.dividerColor),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,

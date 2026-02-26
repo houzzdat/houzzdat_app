@@ -29,28 +29,25 @@ class PaymentCard extends StatelessWidget {
     if (dateStr != null && dateStr.isNotEmpty) {
       try {
         dateLabel = _dateFormat.format(DateTime.parse(dateStr));
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Error parsing payment date: $e');
+      }
     }
 
-    return Container(
+    // UX-audit #19: standardized Card elevation instead of custom BoxShadow
+    return Card(
       margin: const EdgeInsets.symmetric(
         horizontal: AppTheme.spacingM,
         vertical: AppTheme.spacingXS,
       ),
-      padding: const EdgeInsets.all(AppTheme.spacingM),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      elevation: AppTheme.elevationLow,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusL),
-        border: Border.all(color: const Color(0xFFE0E0E0)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 4,
-            offset: const Offset(0, 1),
-          ),
-        ],
+        side: const BorderSide(color: AppTheme.dividerColor),
       ),
-      child: Row(
+      child: Padding(
+        padding: const EdgeInsets.all(AppTheme.spacingM),
+        child: Row(
         children: [
           // Left icon
           Container(
@@ -143,6 +140,7 @@ class PaymentCard extends StatelessWidget {
               style: AppTheme.caption.copyWith(fontWeight: FontWeight.w500),
             ),
         ],
+      ),
       ),
     );
   }

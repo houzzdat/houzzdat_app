@@ -64,9 +64,9 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
           .from('reports')
           .select('*, users!reports_created_by_fkey(full_name)')
           .eq('id', widget.reportId)
-          .single();
+          .maybeSingle(); // UX-audit CI-01
 
-      if (mounted) {
+      if (mounted && data != null) {
         setState(() {
           _report = Map<String, dynamic>.from(data);
           _managerContent =
@@ -92,7 +92,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
       final fmt = DateFormat('d MMM yyyy');
       if (startDate == endDate) return 'Report \u2014 ${fmt.format(start)}';
       return 'Report \u2014 ${fmt.format(start)} to ${fmt.format(end)}';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error parsing report title date: $e');
       return 'Report';
     }
   }
@@ -618,7 +619,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
   Widget build(BuildContext context) {
     if (_isLoading && _managerContent.isEmpty) {
       return Scaffold(
-        backgroundColor: AppTheme.backgroundGrey,
         appBar: AppBar(
           title: const Text('Report'),
           backgroundColor: AppTheme.primaryIndigo,
@@ -629,7 +629,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
     }
 
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       appBar: AppBar(
         title: Text(_title, style: const TextStyle(fontSize: 14)),
         backgroundColor: AppTheme.primaryIndigo,
@@ -664,7 +663,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
               ],
             ),
           ),
-          const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+          const Divider(height: 1, thickness: 1, color: AppTheme.dividerColor),
 
           // Tab content
           Expanded(
@@ -910,7 +909,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen>
     if (dateStr == null) return '';
     try {
       return DateFormat('d MMM, h:mm a').format(DateTime.parse(dateStr));
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error formatting date: $e');
       return dateStr;
     }
   }

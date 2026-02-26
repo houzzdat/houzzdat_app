@@ -80,8 +80,6 @@ class _LogCardState extends State<LogCard> {
   bool get _isTranscribed => _status == 'transcribed';
   bool get _isTranslated => _status == 'translated';
   bool get _isCompleted => _status == 'completed';
-  /// True when we have at least the raw transcript to show
-  bool get _hasTranscript => _isTranscribed || _isTranslated || _isCompleted;
 
   bool get _isEnglish {
     final lang = widget.note['detected_language_code']?.toString() ??
@@ -500,7 +498,7 @@ class _LogCardState extends State<LogCard> {
                   child: Text(
                     _languageCode,
                     style: const TextStyle(
-                      fontSize: 10,
+                      fontSize: 11, // UX-audit HH-16: 10 → 11 for field readability
                       fontWeight: FontWeight.bold,
                       color: AppTheme.primaryIndigo,
                     ),
@@ -761,7 +759,7 @@ class _LogCardState extends State<LogCard> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: statusDisplay.color.withValues(alpha: 0.06),
+        color: statusDisplay.color.withValues(alpha: 0.15), // UX-audit HH-10: 0.06 → 0.15 for sunlight visibility
         borderRadius: BorderRadius.circular(AppTheme.radiusM),
         border: Border(
           left: BorderSide(color: statusDisplay.color, width: 3),

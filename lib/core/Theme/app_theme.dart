@@ -14,7 +14,7 @@ class AppTheme {
   // Status Colors — softer, professional tones
   static const Color successGreen = Color(0xFF2E7D32);
   static const Color warningOrange = Color(0xFFEF6C00);
-  static const Color errorRed = Color(0xFFD32F2F);
+  static const Color errorRed = Color(0xFFC62828); // UX-audit #18: was 0xFFD32F2F (~3.8:1), now ~6.5:1 WCAG AA
   static const Color infoBlue = Color(0xFF1565C0);
 
   // Surface — subtle indigo-tinted grey for depth
@@ -22,8 +22,18 @@ class AppTheme {
 
   // Text Colors
   static const Color textPrimary = Colors.black87;
-  static const Color textSecondary = Color(0xFF757575);
+  static const Color textSecondary = Color(0xFF616161); // UX-audit HH-03: was 0xFF757575 (~3.0:1), now ~4.7:1 on backgroundGrey
   static const Color textOnPrimary = Colors.white;
+
+  // UX-audit #20: theme-aware derived colors (avoid hardcoded Colors.white / Color(0xFF...))
+  static const Color dividerColor = Color(0xFFE0E0E0);
+  static const Color accentAmberLight = Color(0xFFFFCA28);
+  static const Color avatarBackground = Color(0xFFBBDEFB);
+  static const Color needsReviewBackground = Color(0xFFFFF8E1);
+  static const Color borderLight = Color(0x0D000000); // ~black.withOpacity(0.05)
+  static const Color avatarForeground = Color(0xFF1565C0);
+  static const Color badgeGrey = Color(0xFF9E9E9E);
+  static const Color needsReviewBorder = Color(0xFFBDBDBD);
 
   // ========== TYPOGRAPHY ==========
   static const TextStyle headingLarge = TextStyle(
@@ -60,7 +70,7 @@ class AppTheme {
   );
 
   static const TextStyle caption = TextStyle(
-    fontSize: 11,
+    fontSize: 13, // UX-audit HH-01: was 11 — unreadable in sunlight
     color: textSecondary,
   );
 
@@ -115,6 +125,7 @@ class AppTheme {
           backgroundColor: accentAmber,
           foregroundColor: textPrimary,
           elevation: elevationLow,
+          minimumSize: const Size(48, 48), // UX-audit #15: WCAG 2.5.5 touch target
           padding: const EdgeInsets.symmetric(
             horizontal: spacingL,
             vertical: spacingM,
@@ -122,6 +133,16 @@ class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusL),
           ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(48, 48), // UX-audit #15: WCAG 2.5.5 touch target
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          minimumSize: const Size(48, 48), // UX-audit #15: WCAG 2.5.5 touch target
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -189,6 +210,7 @@ class AppTheme {
           backgroundColor: accentAmber,
           foregroundColor: Colors.black,
           elevation: elevationLow,
+          minimumSize: const Size(48, 48), // UX-audit #15: WCAG 2.5.5 touch target
           padding: const EdgeInsets.symmetric(
             horizontal: spacingL,
             vertical: spacingM,
@@ -196,6 +218,16 @@ class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusL),
           ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(48, 48), // UX-audit #15: WCAG 2.5.5 touch target
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          minimumSize: const Size(48, 48), // UX-audit #15: WCAG 2.5.5 touch target
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(

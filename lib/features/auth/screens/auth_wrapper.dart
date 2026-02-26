@@ -41,7 +41,6 @@ class AuthWrapper extends StatelessWidget {
           builder: (context, resultSnapshot) {
             if (resultSnapshot.connectionState == ConnectionState.waiting) {
               return Scaffold(
-                backgroundColor: AppTheme.backgroundGrey,
                 body: Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -82,7 +81,6 @@ class AuthWrapper extends StatelessWidget {
                 return _buildDashboard(result.role ?? 'worker');
               case _AuthResultType.noCompanies:
                 return Scaffold(
-                  backgroundColor: AppTheme.backgroundGrey,
                   body: Center(
                     child: Padding(
                       padding: const EdgeInsets.all(AppTheme.spacingL),
@@ -133,7 +131,6 @@ class AuthWrapper extends StatelessWidget {
 
   Widget _buildErrorScreen(BuildContext context, {Object? error, VoidCallback? onRetry}) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey,
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(AppTheme.spacingL),

@@ -15,7 +15,9 @@ class FeedTab extends StatefulWidget {
   State<FeedTab> createState() => _FeedTabState();
 }
 
-class _FeedTabState extends State<FeedTab> {
+class _FeedTabState extends State<FeedTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true; // UX-audit #3: preserve tab state
   final _supabase = Supabase.instance.client;
   final _recorderService = AudioRecorderService();
   final _searchController = TextEditingController();
@@ -291,70 +293,16 @@ class _FeedTabState extends State<FeedTab> {
   }
 
   Future<void> _handleCreateActionFromNote(Map<String, dynamic> note) async {
-    final result = await showDialog<Map<String, String>>(
+    final result = await showModalBottomSheet<Map<String, String>>(
       context: context,
-      builder: (ctx) {
-        String category = 'action_required';
-        String priority = 'Med';
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
-            title: const Text('Create Action Item'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Category:', style: TextStyle(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 4),
-                DropdownButtonFormField<String>(
-                  value: category,
-                  items: const [
-                    DropdownMenuItem(value: 'action_required', child: Text('Action Required')),
-                    DropdownMenuItem(value: 'approval', child: Text('Approval')),
-                  ],
-                  onChanged: (v) => setDialogState(() => category = v ?? category),
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text('Priority:', style: TextStyle(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 4),
-                DropdownButtonFormField<String>(
-                  value: priority,
-                  items: const [
-                    DropdownMenuItem(value: 'High', child: Text('High')),
-                    DropdownMenuItem(value: 'Med', child: Text('Medium')),
-                    DropdownMenuItem(value: 'Low', child: Text('Low')),
-                  ],
-                  onChanged: (v) => setDialogState(() => priority = v ?? priority),
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, {
-                  'category': category,
-                  'priority': priority,
-                }),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryIndigo),
-                child: const Text('Create', style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          ),
-        );
-      },
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _CreateActionSheet(note: note),
     );
 
     if (result == null) return;
+
+    final isCritical = result['priority'] == 'High' && result['category'] == 'action_required';
 
     try {
       final insertResult = await _supabase.from('action_items').insert({
@@ -365,7 +313,13 @@ class _FeedTabState extends State<FeedTab> {
         'category': result['category'],
         'priority': result['priority'],
         'status': 'pending',
-        'summary': note['transcript'] ?? note['transcript_final'] ?? 'Action from voice note',
+        'is_critical_flag': isCritical,
+        'summary': result['summary']?.isNotEmpty == true
+            ? result['summary']
+            : note['transcript_en_current'] ??
+              note['transcript_final'] ??
+              note['transcript'] ??
+              'Action from voice note',
         'ai_analysis': note['ai_analysis'],
       }).select('id').single();
 
@@ -376,21 +330,53 @@ class _FeedTabState extends State<FeedTab> {
         'project_id': note['project_id'],
         'account_id': widget.accountId,
         'correction_type': 'promoted_to_action',
-        'original_value': 'update',
+        'original_value': note['category'] ?? 'update',
         'corrected_value': result['category'],
         'corrected_by': _supabase.auth.currentUser?.id,
       });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Action item created from update'),
-            backgroundColor: AppTheme.successGreen,
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Text('${_categoryLabel(result['category']!)} created — ${result['priority']} priority'),
+              ],
+            ),
+            backgroundColor: _categoryColor(result['category']!),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } catch (e) {
       debugPrint('Error creating action: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to create action item'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
+      }
+    }
+  }
+
+  String _categoryLabel(String category) {
+    switch (category) {
+      case 'action_required': return 'Action Required';
+      case 'approval':        return 'Approval Request';
+      case 'update':          return 'Update';
+      default:                return 'Action';
+    }
+  }
+
+  Color _categoryColor(String category) {
+    switch (category) {
+      case 'action_required': return AppTheme.errorRed;
+      case 'approval':        return AppTheme.warningOrange;
+      default:                return AppTheme.successGreen;
     }
   }
 
@@ -451,6 +437,7 @@ class _FeedTabState extends State<FeedTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // UX-audit #3: required by AutomaticKeepAliveClientMixin
     if (widget.accountId == null || widget.accountId!.isEmpty) {
       return const LoadingWidget();
     }
@@ -462,7 +449,7 @@ class _FeedTabState extends State<FeedTab> {
           padding: const EdgeInsets.fromLTRB(
             AppTheme.spacingM, AppTheme.spacingM, AppTheme.spacingM, 0,
           ),
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: TextField(
             controller: _searchController,
             onChanged: (value) => setState(() => _searchQuery = value),
@@ -472,6 +459,7 @@ class _FeedTabState extends State<FeedTab> {
               suffixIcon: _searchQuery.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear, size: 20),
+                      tooltip: 'Clear search', // UX-audit #21
                       onPressed: () {
                         _searchController.clear();
                         setState(() => _searchQuery = '');
@@ -495,7 +483,7 @@ class _FeedTabState extends State<FeedTab> {
         // Filter & Sort Bar (matching Actions tab)
         Container(
           padding: const EdgeInsets.all(AppTheme.spacingM),
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           child: Row(
             children: [
               Expanded(
@@ -622,7 +610,7 @@ class _FeedTabState extends State<FeedTab> {
             stream: _getVoiceNotesStream(),
             builder: (context, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
-                return const LoadingWidget(message: 'Loading voice notes...');
+                return const ShimmerLoadingList(itemCount: 5, itemHeight: 140); // UX-audit #4: shimmer instead of spinner
               }
 
               if (snap.hasError) {
@@ -707,6 +695,7 @@ class _FeedTabState extends State<FeedTab> {
                     top: AppTheme.spacingS,
                     bottom: AppTheme.spacingXL,
                   ),
+                  cacheExtent: 500, // UX-audit #6: improved scroll perf
                   itemCount: filteredNotes.length,
                   itemBuilder: (context, i) {
                     final note = filteredNotes[i];
@@ -737,5 +726,427 @@ class _FeedTabState extends State<FeedTab> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+}
+
+// ============================================================
+// CREATE ACTION BOTTOM SHEET
+// ============================================================
+class _CreateActionSheet extends StatefulWidget {
+  final Map<String, dynamic> note;
+  const _CreateActionSheet({required this.note});
+
+  @override
+  State<_CreateActionSheet> createState() => _CreateActionSheetState();
+}
+
+class _CreateActionSheetState extends State<_CreateActionSheet> {
+  String _category = 'action_required';
+  String _priority = 'Med';
+  late TextEditingController _summaryController;
+
+  // ── Category config ──────────────────────────────────────────
+  static const _categories = [
+    (
+      value: 'action_required',
+      label: 'Action Required',
+      sublabel: 'Work that must be done on site',
+      icon: Icons.engineering_rounded,
+      color: AppTheme.errorRed,
+    ),
+    (
+      value: 'approval',
+      label: 'Approval Request',
+      sublabel: 'Needs manager sign-off or owner consent',
+      icon: Icons.fact_check_rounded,
+      color: AppTheme.warningOrange,
+    ),
+    (
+      value: 'update',
+      label: 'Update / Info',
+      sublabel: 'Progress note, no action needed',
+      icon: Icons.info_rounded,
+      color: AppTheme.successGreen,
+    ),
+  ];
+
+  // ── Priority config ──────────────────────────────────────────
+  static const _priorities = [
+    (
+      value: 'High',
+      label: 'High',
+      sublabel: 'Urgent — must be done today',
+      icon: Icons.arrow_upward_rounded,
+      color: AppTheme.errorRed,
+    ),
+    (
+      value: 'Med',
+      label: 'Medium',
+      sublabel: 'Important — address within 2–3 days',
+      icon: Icons.remove_rounded,
+      color: AppTheme.warningOrange,
+    ),
+    (
+      value: 'Low',
+      label: 'Low',
+      sublabel: 'Can wait — complete when possible',
+      icon: Icons.arrow_downward_rounded,
+      color: AppTheme.successGreen,
+    ),
+  ];
+
+  Color get _currentCategoryColor =>
+      _categories.firstWhere((c) => c.value == _category).color;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-fill summary from the best available transcript field
+    final note = widget.note;
+    final pre = note['transcript_en_current'] ??
+        note['transcript_final'] ??
+        note['transcript'] ??
+        note['ai_suggested_summary'] ??
+        '';
+    _summaryController = TextEditingController(text: pre);
+  }
+
+  @override
+  void dispose() {
+    _summaryController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop({
+      'category': _category,
+      'priority': _priority,
+      'summary': _summaryController.text.trim(),
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bottomPad = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.fromLTRB(0, 0, 0, bottomPad),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Handle + header ─────────────────────────────────
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 4),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: theme.dividerColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: _currentCategoryColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.add_task_rounded,
+                        color: _currentCategoryColor, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Create Action Item',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'from voice note',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // ── Category selector ────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                'TYPE',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textSecondary,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                children: _categories.map((cat) {
+                  final selected = _category == cat.value;
+                  return GestureDetector(
+                    onTap: () => setState(() => _category = cat.value),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? cat.color.withValues(alpha: 0.10)
+                            : theme.cardColor,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: selected
+                              ? cat.color
+                              : theme.dividerColor,
+                          width: selected ? 1.8 : 1.0,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: cat.color.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(cat.icon,
+                                color: cat.color, size: 18),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  cat.label,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                    color: selected
+                                        ? cat.color
+                                        : null,
+                                  ),
+                                ),
+                                Text(
+                                  cat.sublabel,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppTheme.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (selected)
+                            Icon(Icons.check_circle_rounded,
+                                color: cat.color, size: 20)
+                          else
+                            Icon(Icons.circle_outlined,
+                                color: theme.dividerColor, size: 20),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // ── Priority selector ────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                'PRIORITY',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textSecondary,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: _priorities.map((pri) {
+                  final selected = _priority == pri.value;
+                  return Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _priority = pri.value),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? pri.color.withValues(alpha: 0.12)
+                              : theme.cardColor,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: selected ? pri.color : theme.dividerColor,
+                            width: selected ? 1.8 : 1.0,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(pri.icon,
+                                color: selected
+                                    ? pri.color
+                                    : AppTheme.textSecondary,
+                                size: 22),
+                            const SizedBox(height: 4),
+                            Text(
+                              pri.label,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: selected ? pri.color : null,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              pri.sublabel,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: AppTheme.textSecondary,
+                              ),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // ── Summary / instruction field ──────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                'SUMMARY / INSTRUCTIONS',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textSecondary,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                controller: _summaryController,
+                maxLines: 3,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(
+                  hintText: 'Describe what needs to be done…',
+                  filled: true,
+                  fillColor: theme.cardColor,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: theme.dividerColor),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: theme.dividerColor),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                        color: _currentCategoryColor, width: 1.8),
+                  ),
+                  contentPadding: const EdgeInsets.all(14),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // ── Action buttons ───────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton.icon(
+                      onPressed: _submit,
+                      icon: const Icon(Icons.add_task_rounded,
+                          color: Colors.white, size: 18),
+                      label: const Text(
+                        'Create Action',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _currentCategoryColor,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
